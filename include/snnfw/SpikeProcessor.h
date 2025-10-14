@@ -51,9 +51,9 @@ public:
     /**
      * @brief Constructor
      * @param timeSliceCount Number of time slices to buffer (default: 10000 = 10 seconds)
-     * @param deliveryThreads Number of threads for parallel delivery (default: 4)
+     * @param deliveryThreads Number of threads for parallel delivery (default: 20)
      */
-    explicit SpikeProcessor(size_t timeSliceCount = 10000, size_t deliveryThreads = 4);
+    explicit SpikeProcessor(size_t timeSliceCount = 10000, size_t deliveryThreads = 20);
 
     /**
      * @brief Destructor - stops the processor and cleans up
@@ -130,6 +130,26 @@ public:
      */
     size_t getSpikeCountAtSlice(size_t timeSliceIndex) const;
 
+    /**
+     * @brief Enable or disable real-time synchronization
+     * @param enable true to sync with wall-clock time, false to run as fast as possible
+     */
+    void setRealTimeSync(bool enable) { realTimeSync = enable; }
+
+    /**
+     * @brief Check if real-time synchronization is enabled
+     * @return true if enabled, false otherwise
+     */
+    bool isRealTimeSync() const { return realTimeSync; }
+
+    /**
+     * @brief Get timing statistics
+     * @param avgLoopTime Average loop time in microseconds
+     * @param maxLoopTime Maximum loop time in microseconds
+     * @param driftMs Accumulated drift in milliseconds
+     */
+    void getTimingStats(double& avgLoopTime, double& maxLoopTime, double& driftMs) const;
+
 private:
     /**
      * @brief Main processing loop (runs in background thread)
@@ -174,6 +194,17 @@ private:
     // Simulation time
     std::atomic<double> currentTime; ///< Current simulation time in milliseconds
     size_t currentSliceIndex;        ///< Current time slice index
+
+    // Real-time synchronization
+    bool realTimeSync;               ///< Whether to sync with wall-clock time
+    std::chrono::steady_clock::time_point startWallTime; ///< Wall-clock start time
+
+    // Timing statistics
+    mutable std::mutex statsMutex;   ///< Protects timing statistics
+    double totalLoopTime;            ///< Total accumulated loop time (microseconds)
+    double maxLoopTime;              ///< Maximum loop time (microseconds)
+    uint64_t loopCount;              ///< Number of loops executed
+    double accumulatedDrift;         ///< Accumulated time drift (milliseconds)
 };
 
 } // namespace snnfw

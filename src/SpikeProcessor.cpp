@@ -12,16 +12,21 @@ SpikeProcessor::SpikeProcessor(size_t timeSliceCount, size_t deliveryThreads)
       running(false),
       stopRequested(false),
       currentTime(0.0),
-      currentSliceIndex(0) {
-    
+      currentSliceIndex(0),
+      realTimeSync(true),
+      totalLoopTime(0.0),
+      maxLoopTime(0.0),
+      loopCount(0),
+      accumulatedDrift(0.0) {
+
     // Initialize event queue with empty vectors for each time slice
     eventQueue.resize(numTimeSlices);
-    
+
     // Create thread pool for spike delivery
     threadPool = std::make_unique<ThreadPool>(numDeliveryThreads);
-    
-    SNNFW_INFO("SpikeProcessor created: {} time slices, {} delivery threads", 
-               numTimeSlices, numDeliveryThreads);
+
+    SNNFW_INFO("SpikeProcessor created: {} time slices, {} delivery threads, real-time sync: {}",
+               numTimeSlices, numDeliveryThreads, realTimeSync);
 }
 
 SpikeProcessor::~SpikeProcessor() {
@@ -36,11 +41,23 @@ void SpikeProcessor::start() {
 
     stopRequested.store(false);
     running.store(true);
-    
+
+    // Reset timing statistics
+    {
+        std::lock_guard<std::mutex> lock(statsMutex);
+        totalLoopTime = 0.0;
+        maxLoopTime = 0.0;
+        loopCount = 0;
+        accumulatedDrift = 0.0;
+    }
+
+    // Record wall-clock start time
+    startWallTime = std::chrono::steady_clock::now();
+
     // Start the background processing thread
     processingThread = std::thread(&SpikeProcessor::processingLoop, this);
-    
-    SNNFW_INFO("SpikeProcessor started");
+
+    SNNFW_INFO("SpikeProcessor started (real-time sync: {})", realTimeSync);
 }
 
 void SpikeProcessor::stop() {
@@ -161,7 +178,11 @@ int SpikeProcessor::getTimeSliceIndex(double timeMs) const {
 void SpikeProcessor::processingLoop() {
     SNNFW_INFO("SpikeProcessor: Processing loop started");
 
+    auto loopStartTime = std::chrono::steady_clock::now();
+
     while (!stopRequested.load()) {
+        auto iterationStart = std::chrono::steady_clock::now();
+
         // Deliver spikes for current time slice
         deliverCurrentSlice();
 
@@ -170,51 +191,111 @@ void SpikeProcessor::processingLoop() {
         currentTime.store(newTime);
         currentSliceIndex = (currentSliceIndex + 1) % numTimeSlices;
 
-        // Sleep for the time step duration (simulating real-time)
-        // In a real simulation, you might want to run as fast as possible
-        // or synchronize with wall-clock time
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        auto iterationEnd = std::chrono::steady_clock::now();
+
+        // Calculate how long this iteration took
+        auto iterationDuration = std::chrono::duration_cast<std::chrono::microseconds>(
+            iterationEnd - iterationStart);
+        double iterationTimeUs = static_cast<double>(iterationDuration.count());
+
+        // Update timing statistics
+        {
+            std::lock_guard<std::mutex> lock(statsMutex);
+            totalLoopTime += iterationTimeUs;
+            maxLoopTime = std::max(maxLoopTime, iterationTimeUs);
+            loopCount++;
+        }
+
+        if (realTimeSync) {
+            // Real-time synchronization: each timeslice should take exactly 1ms of wall-clock time
+            // Calculate expected wall-clock time for this simulation time
+            double expectedWallTimeMs = currentTime.load();
+            auto expectedWallTime = startWallTime +
+                std::chrono::microseconds(static_cast<int64_t>(expectedWallTimeMs * 1000.0));
+
+            auto now = std::chrono::steady_clock::now();
+
+            // Calculate drift
+            auto drift = std::chrono::duration_cast<std::chrono::microseconds>(now - expectedWallTime);
+            double driftMs = static_cast<double>(drift.count()) / 1000.0;
+
+            {
+                std::lock_guard<std::mutex> lock(statsMutex);
+                accumulatedDrift = driftMs;
+            }
+
+            // If we're ahead of schedule, sleep to maintain real-time sync
+            if (drift.count() < 0) {
+                // We're ahead - sleep for the remaining time
+                auto sleepDuration = std::chrono::microseconds(-drift.count());
+                std::this_thread::sleep_for(sleepDuration);
+            } else if (driftMs > 10.0) {
+                // We're falling behind by more than 10ms - log a warning
+                SNNFW_WARN("SpikeProcessor: Falling behind real-time by {:.2f}ms at simulation time {:.1f}ms",
+                          driftMs, currentTime.load());
+            }
+
+            // Log timing info periodically (every 1000 iterations = 1 second of sim time)
+            if (loopCount % 1000 == 0) {
+                double avgLoopTime = totalLoopTime / loopCount;
+                SNNFW_DEBUG("SpikeProcessor: Sim time: {:.1f}ms, Avg loop: {:.1f}μs, Max loop: {:.1f}μs, Drift: {:.2f}ms",
+                           currentTime.load(), avgLoopTime, maxLoopTime, driftMs);
+            }
+        } else {
+            // Non-real-time mode: run as fast as possible
+            // Just a tiny sleep to prevent CPU spinning if there's no work
+            if (iterationTimeUs < 10.0) {
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
+            }
+        }
     }
 
-    SNNFW_INFO("SpikeProcessor: Processing loop ended");
+    SNNFW_INFO("SpikeProcessor: Processing loop ended at simulation time {:.3f}ms",
+               currentTime.load());
+
+    // Log final statistics
+    double avgLoopTime, maxLoop, drift;
+    getTimingStats(avgLoopTime, maxLoop, drift);
+    SNNFW_INFO("SpikeProcessor: Final stats - Avg loop: {:.1f}μs, Max loop: {:.1f}μs, Final drift: {:.2f}ms",
+               avgLoopTime, maxLoop, drift);
 }
 
 void SpikeProcessor::deliverCurrentSlice() {
     std::vector<std::shared_ptr<ActionPotential>> spikesToDeliver;
-    
+
     // Extract spikes for current time slice
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         spikesToDeliver = std::move(eventQueue[currentSliceIndex]);
         eventQueue[currentSliceIndex].clear();
     }
-    
+
     if (spikesToDeliver.empty()) {
         return;
     }
-    
+
     SNNFW_TRACE("SpikeProcessor: Delivering {} spikes at time {:.3f}ms",
                 spikesToDeliver.size(), currentTime.load());
-    
+
     // Divide spikes evenly among threads
     size_t spikesPerThread = (spikesToDeliver.size() + numDeliveryThreads - 1) / numDeliveryThreads;
-    
+
     std::vector<std::future<void>> deliveryTasks;
-    
+
     for (size_t threadIdx = 0; threadIdx < numDeliveryThreads; ++threadIdx) {
         size_t startIdx = threadIdx * spikesPerThread;
         size_t endIdx = std::min(startIdx + spikesPerThread, spikesToDeliver.size());
-        
+
         if (startIdx >= spikesToDeliver.size()) {
             break;
         }
-        
+
         // Submit delivery task to thread pool
         deliveryTasks.emplace_back(
             threadPool->enqueue([this, &spikesToDeliver, startIdx, endIdx]() {
                 for (size_t i = startIdx; i < endIdx; ++i) {
                     const auto& spike = spikesToDeliver[i];
-                    
+
                     // Find the target dendrite
                     std::shared_ptr<Dendrite> dendrite;
                     {
@@ -224,7 +305,7 @@ void SpikeProcessor::deliverCurrentSlice() {
                             dendrite = it->second;
                         }
                     }
-                    
+
                     if (dendrite) {
                         dendrite->receiveSpike(spike);
                     } else {
@@ -235,11 +316,24 @@ void SpikeProcessor::deliverCurrentSlice() {
             })
         );
     }
-    
+
     // Wait for all delivery tasks to complete
     for (auto& task : deliveryTasks) {
         task.get();
     }
+}
+
+void SpikeProcessor::getTimingStats(double& avgLoopTime, double& maxLoop, double& driftMs) const {
+    std::lock_guard<std::mutex> lock(statsMutex);
+
+    if (loopCount > 0) {
+        avgLoopTime = totalLoopTime / loopCount;
+    } else {
+        avgLoopTime = 0.0;
+    }
+
+    maxLoop = maxLoopTime;
+    driftMs = accumulatedDrift;
 }
 
 } // namespace snnfw

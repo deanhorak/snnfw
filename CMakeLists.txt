@@ -138,6 +138,9 @@ target_link_libraries(datastore_example ${PROJECT_NAME})
 add_executable(experiment_config_example examples/experiment_config_example.cpp)
 target_link_libraries(experiment_config_example ${PROJECT_NAME})
 
+add_executable(realtime_spike_example examples/realtime_spike_example.cpp)
+target_link_libraries(realtime_spike_example ${PROJECT_NAME})
+
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)
 if(BUILD_TESTS)
