@@ -88,6 +88,8 @@ set(LIB_SOURCES
     src/SpikeProcessor.cpp
     src/NeuralObjectFactory.cpp
     src/Datastore.cpp
+    src/MNISTLoader.cpp
+    src/STDPLearning.cpp
 )
 
 # Create the library
@@ -140,6 +142,46 @@ target_link_libraries(experiment_config_example ${PROJECT_NAME})
 
 add_executable(realtime_spike_example examples/realtime_spike_example.cpp)
 target_link_libraries(realtime_spike_example ${PROJECT_NAME})
+
+# Experiments
+add_executable(mnist_learning experiments/mnist_learning.cpp)
+target_link_libraries(mnist_learning ${PROJECT_NAME})
+
+add_executable(mnist_simple_test experiments/mnist_simple_test.cpp)
+target_link_libraries(mnist_simple_test ${PROJECT_NAME})
+
+add_executable(mnist_debug_retina experiments/mnist_debug_retina.cpp)
+target_link_libraries(mnist_debug_retina ${PROJECT_NAME})
+
+add_executable(mnist_debug_learning experiments/mnist_debug_learning.cpp)
+target_link_libraries(mnist_debug_learning ${PROJECT_NAME})
+
+add_executable(mnist_full_test experiments/mnist_full_test.cpp)
+target_link_libraries(mnist_full_test ${PROJECT_NAME})
+
+add_executable(mnist_visualize_patterns experiments/mnist_visualize_patterns.cpp)
+target_link_libraries(mnist_visualize_patterns ${PROJECT_NAME})
+
+add_executable(mnist_fuzzy_test experiments/mnist_fuzzy_test.cpp)
+target_link_libraries(mnist_fuzzy_test ${PROJECT_NAME})
+
+add_executable(mnist_spatial_sdr experiments/mnist_spatial_sdr.cpp)
+target_link_libraries(mnist_spatial_sdr ${PROJECT_NAME})
+
+add_executable(mnist_edge_features experiments/mnist_edge_features.cpp)
+target_link_libraries(mnist_edge_features ${PROJECT_NAME})
+
+add_executable(mnist_two_layer experiments/mnist_two_layer.cpp)
+target_link_libraries(mnist_two_layer ${PROJECT_NAME})
+
+add_executable(mnist_activation_matching experiments/mnist_activation_matching.cpp)
+target_link_libraries(mnist_activation_matching ${PROJECT_NAME})
+
+add_executable(mnist_hyperparameter_search experiments/mnist_hyperparameter_search.cpp)
+target_link_libraries(mnist_hyperparameter_search ${PROJECT_NAME})
+
+add_executable(mnist_optimized experiments/mnist_optimized.cpp)
+target_link_libraries(mnist_optimized ${PROJECT_NAME})
 
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)

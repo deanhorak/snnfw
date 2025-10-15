@@ -51,6 +51,35 @@ public:
     void printReferencePatterns() const;
 
     /**
+     * @brief Check if current pattern matches any learned pattern
+     * @return true if neuron should fire, false otherwise
+     */
+    bool checkShouldFire() const { return shouldFire(); }
+
+    /**
+     * @brief Get the best similarity score between current spikes and learned patterns
+     * @return Best similarity score (0.0 to 1.0), or -1.0 if no patterns learned
+     */
+    double getBestSimilarity() const;
+
+    /**
+     * @brief Get the number of learned patterns
+     * @return Number of reference patterns stored
+     */
+    size_t getLearnedPatternCount() const { return referencePatterns.size(); }
+
+    /**
+     * @brief Get all learned patterns
+     * @return Const reference to vector of learned patterns
+     */
+    const std::vector<std::vector<double>>& getLearnedPatterns() const { return referencePatterns; }
+
+    /**
+     * @brief Clear all spikes from the rolling window
+     */
+    void clearSpikes() { spikes.clear(); }
+
+    /**
      * @brief Set the axon ID for this neuron
      * @param id ID of the axon
      */
@@ -136,6 +165,29 @@ private:
      * @return Cosine similarity value (0.0 to 1.0)
      */
     static double cosineSimilarity(const std::vector<double>& a, const std::vector<double>& b);
+
+    /**
+     * @brief Compute spike distance between two spike trains
+     * @param spikes1 First spike train
+     * @param spikes2 Second spike train
+     * @return Distance (lower is more similar)
+     */
+    double spikeDistance(const std::vector<double>& spikes1, const std::vector<double>& spikes2) const;
+
+    /**
+     * @brief Convert spike pattern to temporal histogram for fuzzy matching
+     * @param pattern Spike times to convert
+     * @return Histogram representation
+     */
+    std::vector<double> spikeToHistogram(const std::vector<double>& pattern) const;
+
+    /**
+     * @brief Compute similarity between two histograms
+     * @param hist1 First histogram
+     * @param hist2 Second histogram
+     * @return Similarity score (0.0 to 1.0)
+     */
+    double histogramSimilarity(const std::vector<double>& hist1, const std::vector<double>& hist2) const;
 };
 
 } // namespace snnfw
