@@ -8,15 +8,36 @@
 namespace snnfw {
 
 /**
- * @brief Neuron class for spiking neural network with pattern learning
+ * @brief Neuron class for spiking neural network with temporal pattern learning
  *
- * This class represents a neuron that can learn spike patterns and fire
- * when similar patterns are detected. It uses a rolling time window
- * and cosine similarity for pattern matching.
+ * This class implements a biologically-inspired neuron that learns temporal spike patterns
+ * rather than using traditional weight-based learning. Key features:
  *
- * Each neuron has:
+ * Pattern Learning:
+ * - Stores temporal spike patterns (sequences of spike times)
+ * - Up to maxReferencePatterns patterns per neuron (default: 20, MNIST uses 100)
+ * - When capacity is reached, new patterns are blended into most similar existing pattern
+ * - Uses cosine similarity for pattern matching
+ *
+ * Spike Processing:
+ * - Rolling time window maintains recent spikes
+ * - Spikes outside the window are automatically removed
+ * - Pattern learning via learnCurrentPattern() stores current spike window
+ *
+ * Similarity Metrics:
+ * - Cosine similarity for vector-based pattern matching
+ * - Victor-Purpura spike distance for temporal pattern comparison
+ * - Histogram-based fuzzy matching for spike train comparison
+ *
+ * Connectivity:
  * - One axon (output terminal) - stored as axonId
  * - Multiple dendrites (input terminals) - stored as dendriteIds
+ *
+ * Usage in MNIST Experiments:
+ * - 392 neurons (49 regions × 8 orientations)
+ * - Each neuron learns edge patterns at specific orientation
+ * - Activation vectors used for k-NN classification
+ * - Achieves 81.20% accuracy on MNIST digit recognition
  */
 class Neuron : public NeuralObject {
 public:
@@ -103,6 +124,12 @@ public:
      * @return true if dendrite was removed, false if not found
      */
     bool removeDendrite(uint64_t dendriteId);
+
+    /**
+     * @brief Get all reference patterns learned by this neuron
+     * @return Const reference to vector of reference patterns
+     */
+    const std::vector<std::vector<double>>& getReferencePatterns() const { return referencePatterns; }
 
     /**
      * @brief Get all dendrite IDs for this neuron

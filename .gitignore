@@ -86,10 +86,12 @@ gmon.out
 *.helgrind
 *.drd
 
-# Experiment data and datastores
-experiments/
+# Experiment data and datastores (but allow source code)
 test_db/
 test_datastore/
+experiments/*
+!experiments/*.cpp
+!experiments/*.h
 
 # RocksDB files
 *.sst

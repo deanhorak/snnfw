@@ -251,11 +251,15 @@ EventObject (base class with scheduled time)
 
 ## 📚 Documentation
 
+### Core Framework
 - **[EXPERIMENT_MANAGEMENT.md](EXPERIMENT_MANAGEMENT.md)** - Complete guide to experiment management
 - **[DATASTORE_ARCHITECTURE.md](DATASTORE_ARCHITECTURE.md)** - Datastore implementation details
 - **[NEURAL_CONNECTIVITY.md](NEURAL_CONNECTIVITY.md)** - Neural connectivity architecture
 - **[FEATURE_SUMMARY.md](FEATURE_SUMMARY.md)** - Recent feature additions
 - **[INSTALL_ROCKSDB.md](INSTALL_ROCKSDB.md)** - RocksDB installation guide
+
+### Experiments
+- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (81.20% accuracy)
 
 ## 🎯 Examples
 
@@ -265,12 +269,32 @@ The `examples/` directory contains working demonstrations:
 - **experiment_config_example.cpp** - Experiment management
 - **hierarchical_structure_example.cpp** - Building brain hierarchies
 - **factory_example.cpp** - Using the NeuralObjectFactory
+- **neural_network_example.cpp** - Complete neural network with spike processing
+- **realtime_spike_example.cpp** - Real-time spike processing demonstration
 
 Build and run examples:
 ```bash
 cd build
 make experiment_config_example
 ./experiment_config_example
+```
+
+## 🧠 MNIST Digit Recognition
+
+The `experiments/` directory contains MNIST digit recognition experiments demonstrating spike-based pattern matching:
+
+**Current Best Result: 81.20% accuracy** using:
+- Edge-based feature detection (8 orientations)
+- Spike-based pattern learning
+- k-Nearest Neighbors classification
+
+See **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** for complete details.
+
+Build and run:
+```bash
+cd build
+make mnist_optimized -j4
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH SPDLOG_LEVEL=error ./mnist_optimized
 ```
 
 ## 🧪 Testing

@@ -183,6 +183,9 @@ target_link_libraries(mnist_hyperparameter_search ${PROJECT_NAME})
 add_executable(mnist_optimized experiments/mnist_optimized.cpp)
 target_link_libraries(mnist_optimized ${PROJECT_NAME})
 
+add_executable(mnist_pattern_diversity experiments/mnist_pattern_diversity.cpp)
+target_link_libraries(mnist_pattern_diversity ${PROJECT_NAME})
+
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)
 if(BUILD_TESTS)
