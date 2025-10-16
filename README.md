@@ -37,6 +37,13 @@ Biologically-accurate hierarchical organization with **named objects**:
 - **Multiple Experiments** - Easy switching between different studies
 - **Size Tracking** - Monitor storage usage per experiment
 
+### Configuration System
+- **JSON Configuration** - Externalized hyperparameters for reproducible experiments
+- **SONATA Format** - Industry-standard network description using HDF5
+- **ConfigLoader** - Type-safe configuration loading with defaults
+- **SONATANetworkBuilder** - Build networks from SONATA files
+- **Multiple Configurations** - Easy parameter sweeps and ablation studies
+
 ### Advanced Features
 - **64-bit Unique IDs** - Support for brain-scale networks (100 trillion objects per type)
 - **ID-Based Storage** - Memory-efficient ID references instead of pointers
@@ -258,6 +265,10 @@ EventObject (base class with scheduled time)
 - **[FEATURE_SUMMARY.md](FEATURE_SUMMARY.md)** - Recent feature additions
 - **[INSTALL_ROCKSDB.md](INSTALL_ROCKSDB.md)** - RocksDB installation guide
 
+### Configuration System
+- **[docs/CONFIGURATION_SYSTEM.md](docs/CONFIGURATION_SYSTEM.md)** - Complete guide to configuration system
+- **[configs/README.md](configs/README.md)** - Available configurations and usage
+
 ### Experiments
 - **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (81.20% accuracy)
 
@@ -286,16 +297,38 @@ The `experiments/` directory contains MNIST digit recognition experiments demons
 **Current Best Result: 81.20% accuracy** using:
 - Edge-based feature detection (8 orientations)
 - Spike-based pattern learning
-- k-Nearest Neighbors classification
+- k-Nearest Neighbors classification (k=5)
+- 7×7 spatial grid (49 regions)
+- Configurable via JSON and SONATA format
 
 See **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** for complete details.
 
-Build and run:
+### Quick Start
+
 ```bash
 cd build
 make mnist_optimized -j4
-LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH SPDLOG_LEVEL=error ./mnist_optimized
+
+# Run with default configuration (81.20% accuracy)
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH SPDLOG_LEVEL=error ./mnist_optimized ../configs/mnist_config.json
+
+# Run with fast configuration (quick testing)
+./mnist_optimized ../configs/mnist_config_fast.json
+
+# Run with different k value
+./mnist_optimized ../configs/mnist_config_k3.json
 ```
+
+### Available Configurations
+
+- **`mnist_config.json`** - Default (81.20% accuracy, 7×7 grid, k=5)
+- **`mnist_config_5x5.json`** - Smaller grid (faster, ~75-78% accuracy)
+- **`mnist_config_k3.json`** - k=3 neighbors
+- **`mnist_config_k10.json`** - k=10 neighbors
+- **`mnist_config_fast.json`** - Quick testing (1000 examples/digit)
+- **`mnist_config_no_sonata.json`** - Manual network construction
+
+See **[configs/README.md](configs/README.md)** for detailed configuration documentation.
 
 ## 🧪 Testing
 

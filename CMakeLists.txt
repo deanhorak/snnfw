@@ -48,7 +48,49 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.11.3
 )
-FetchContent_MakeAvailable(nlohmann_json)
+# Make nlohmann_json available first so libsonata can find it
+FetchContent_GetProperties(nlohmann_json)
+if(NOT nlohmann_json_POPULATED)
+    FetchContent_Populate(nlohmann_json)
+    add_subdirectory(${nlohmann_json_SOURCE_DIR} ${nlohmann_json_BINARY_DIR})
+endif()
+
+# Set nlohmann_json_DIR so libsonata can find it
+set(nlohmann_json_DIR ${nlohmann_json_BINARY_DIR})
+
+# Fetch HighFive (HDF5 C++ wrapper) - required by libsonata
+message(STATUS "Fetching HighFive...")
+option(HIGHFIVE_USE_BOOST "Enable Boost support" OFF)
+option(HIGHFIVE_USE_EIGEN "Enable Eigen support" OFF)
+option(HIGHFIVE_BUILD_DOCS "Build documentation" OFF)
+option(HIGHFIVE_EXAMPLES "Build examples" OFF)
+option(HIGHFIVE_UNIT_TESTS "Build unit tests" OFF)
+FetchContent_Declare(
+    HighFive
+    GIT_REPOSITORY https://github.com/BlueBrain/HighFive.git
+    GIT_TAG v2.9.0
+)
+# Make HighFive available first so libsonata can find it
+FetchContent_GetProperties(HighFive)
+if(NOT highfive_POPULATED)
+    FetchContent_Populate(HighFive)
+    add_subdirectory(${highfive_SOURCE_DIR} ${highfive_BINARY_DIR})
+endif()
+
+# Set HighFive_DIR so libsonata can find it
+set(HighFive_DIR ${highfive_BINARY_DIR})
+
+# Fetch libsonata for SONATA format support
+message(STATUS "Fetching libsonata...")
+option(SONATA_TESTS "Build libsonata tests" OFF)
+option(SONATA_PYTHON "Build libsonata Python bindings" OFF)
+option(EXTLIB_FROM_SUBMODULES "Use git submodules for external libraries" OFF)
+FetchContent_Declare(
+    libsonata
+    GIT_REPOSITORY https://github.com/BlueBrain/libsonata.git
+    GIT_TAG v0.1.27
+)
+FetchContent_MakeAvailable(libsonata)
 
 # Find RocksDB for persistent storage
 message(STATUS "Looking for RocksDB...")
@@ -181,7 +223,13 @@ add_executable(mnist_hyperparameter_search experiments/mnist_hyperparameter_sear
 target_link_libraries(mnist_hyperparameter_search ${PROJECT_NAME})
 
 add_executable(mnist_optimized experiments/mnist_optimized.cpp)
-target_link_libraries(mnist_optimized ${PROJECT_NAME})
+find_package(CURL REQUIRED)
+target_link_libraries(mnist_optimized ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl)
+target_include_directories(mnist_optimized PRIVATE
+    ${highfive_SOURCE_DIR}/include
+    ${libsonata_SOURCE_DIR}/include
+    ${HDF5_INCLUDE_DIRS}
+)
 
 add_executable(mnist_pattern_diversity experiments/mnist_pattern_diversity.cpp)
 target_link_libraries(mnist_pattern_diversity ${PROJECT_NAME})

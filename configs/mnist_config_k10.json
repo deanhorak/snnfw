@@ -1,0 +1,36 @@
+{
+  "network": {
+    "grid_size": 7,
+    "region_size": 4,
+    "num_orientations": 8,
+    "neurons_per_feature": 1,
+    "edge_threshold": 0.15
+  },
+  "neuron": {
+    "window_size_ms": 200.0,
+    "similarity_threshold": 0.7,
+    "max_patterns": 100
+  },
+  "training": {
+    "examples_per_digit": 5000,
+    "test_images": 10000,
+    "spike_duration_ms": 100.0
+  },
+  "classification": {
+    "method": "knn",
+    "k_neighbors": 10
+  },
+  "data": {
+    "train_images": "/home/dean/repos/ctm/data/MNIST/raw/train-images-idx3-ubyte",
+    "train_labels": "/home/dean/repos/ctm/data/MNIST/raw/train-labels-idx1-ubyte",
+    "test_images": "/home/dean/repos/ctm/data/MNIST/raw/t10k-images-idx3-ubyte",
+    "test_labels": "/home/dean/repos/ctm/data/MNIST/raw/t10k-labels-idx1-ubyte"
+  },
+  "sonata": {
+    "network_file": "../configs/mnist_network.h5",
+    "use_sonata": true,
+    "node_population": "layer1_neurons",
+    "edge_population": "layer1_synapses"
+  }
+}
+
