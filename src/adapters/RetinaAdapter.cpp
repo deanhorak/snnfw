@@ -46,10 +46,13 @@ bool RetinaAdapter::initialize() {
 }
 
 void RetinaAdapter::createNeurons() {
+    // Clear existing neurons completely before creating new ones
+    neurons_.clear();
+    neuronGrid_.clear();
+
     int numRegions = gridSize_ * gridSize_;
     neuronGrid_.resize(numRegions);
-    neurons_.clear();
-    
+
     int neuronId = 0;
     for (int region = 0; region < numRegions; ++region) {
         neuronGrid_[region].resize(numOrientations_);
@@ -88,13 +91,13 @@ std::vector<uint8_t> RetinaAdapter::extractRegion(const Image& image,
 std::vector<double> RetinaAdapter::extractEdgeFeatures(const std::vector<uint8_t>& region,
                                                         int regionSize) const {
     std::vector<double> features(numOrientations_, 0.0);
-    
+
     // Edge detection with Gabor-like filters at multiple orientations
     for (int r = 1; r < regionSize - 1; ++r) {
         for (int c = 1; c < regionSize - 1; ++c) {
             int idx = r * regionSize + c;
             double center = static_cast<double>(region[idx]);
-            
+
             // Get neighbors
             double top = static_cast<double>(region[(r-1) * regionSize + c]);
             double bottom = static_cast<double>(region[(r+1) * regionSize + c]);
@@ -104,31 +107,60 @@ std::vector<double> RetinaAdapter::extractEdgeFeatures(const std::vector<uint8_t
             double topRight = static_cast<double>(region[(r-1) * regionSize + (c+1)]);
             double bottomLeft = static_cast<double>(region[(r+1) * regionSize + (c-1)]);
             double bottomRight = static_cast<double>(region[(r+1) * regionSize + (c+1)]);
-            
-            // Calculate gradients for 8 orientations
-            // 0° (horizontal)
-            features[0] += std::abs(right - left);
-            
-            // 22.5°
-            features[1] += std::abs(topRight - bottomLeft);
-            
-            // 45° (diagonal)
-            features[2] += std::abs(top + topRight - bottom - bottomLeft);
-            
-            // 67.5°
-            features[3] += std::abs(topRight - bottomLeft);
-            
-            // 90° (vertical)
-            features[4] += std::abs(bottom - top);
-            
-            // 112.5°
-            features[5] += std::abs(bottomRight - topLeft);
-            
-            // 135° (diagonal)
-            features[6] += std::abs(bottom + bottomRight - top - topLeft);
-            
-            // 157.5°
-            features[7] += std::abs(bottomRight - topLeft);
+
+            // Calculate gradients for up to 8 orientations (based on numOrientations_)
+            // Only compute the orientations we actually need
+            if (numOrientations_ >= 1) {
+                // 0° (horizontal)
+                features[0] += std::abs(right - left);
+            }
+
+            if (numOrientations_ >= 2) {
+                // 22.5°
+                features[1] += std::abs(topRight - bottomLeft);
+            }
+
+            if (numOrientations_ >= 3) {
+                // 45° (diagonal)
+                features[2] += std::abs(top + topRight - bottom - bottomLeft);
+            }
+
+            if (numOrientations_ >= 4) {
+                // 67.5°
+                features[3] += std::abs(topRight - bottomLeft);
+            }
+
+            if (numOrientations_ >= 5) {
+                // 90° (vertical)
+                features[4] += std::abs(bottom - top);
+            }
+
+            if (numOrientations_ >= 6) {
+                // 112.5°
+                features[5] += std::abs(bottomRight - topLeft);
+            }
+
+            if (numOrientations_ >= 7) {
+                // 135° (diagonal)
+                features[6] += std::abs(bottom + bottomRight - top - topLeft);
+            }
+
+            if (numOrientations_ >= 8) {
+                // 157.5°
+                features[7] += std::abs(bottomRight - topLeft);
+            }
+
+            // For more than 8 orientations, distribute evenly across 180 degrees
+            for (int orient = 8; orient < numOrientations_; ++orient) {
+                double angle = (orient * 180.0) / numOrientations_;
+                double radians = angle * M_PI / 180.0;
+                double dx = std::cos(radians);
+                double dy = std::sin(radians);
+
+                // Approximate gradient in this direction
+                double grad = std::abs(dx * (right - left) + dy * (bottom - top));
+                features[orient] += grad;
+            }
         }
     }
     
