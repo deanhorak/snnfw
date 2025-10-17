@@ -296,20 +296,25 @@ cat optimization_results/result_*.json | tail -1 | jq '.score'
 
 ## Known Issues
 
-### Memory Corruption with Variable Orientations
-**Status**: Under investigation
+### ~~Memory Corruption with Variable Orientations~~ **FIXED** ✅
 
-When running multiple iterations with different `num_orientations` values, a memory corruption error occurs:
+**Status**: ✅ **RESOLVED** (Commit: `da60392`)
+
+**Original Issue**: When running multiple iterations with different `num_orientations` values, a heap-buffer-overflow error occurred:
 ```
 free(): invalid next size (fast)
 Aborted (core dumped)
 ```
 
-**Workaround**: Use fixed `num_orientations` or run single evaluations
+**Root Cause**: The `extractEdgeFeatures()` function in `RetinaAdapter.cpp` was hardcoded to write to 8 orientation indices (0-7) regardless of the actual `numOrientations_` value. When `numOrientations_` was less than 8, the function would write past the end of the `features` vector, causing heap corruption.
 
-**Root Cause**: Likely related to neuron memory management when adapter is recreated with different sizes
+**Fix Applied**:
+- Added bounds checking for each orientation calculation
+- Only compute orientations up to `numOrientations_`
+- Added support for >8 orientations using angular interpolation
+- Tested with AddressSanitizer and confirmed fix with multiple optimization iterations
 
-**Fix**: Needs investigation of Neuron destructor and spike buffer management
+The hyperparameter optimization framework now works correctly with any number of orientations (1-12+).
 
 ## Future Enhancements
 
