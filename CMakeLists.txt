@@ -140,6 +140,7 @@ set(LIB_SOURCES
     src/Datastore.cpp
     src/MNISTLoader.cpp
     src/STDPLearning.cpp
+    src/HyperparameterOptimizer.cpp
     src/adapters/RetinaAdapter.cpp
     src/adapters/DisplayAdapter.cpp
     src/adapters/AudioAdapter.cpp
@@ -252,6 +253,9 @@ target_include_directories(mnist_with_adapters PRIVATE
     ${highfive_SOURCE_DIR}/include
     ${libsonata_SOURCE_DIR}/include
 )
+
+add_executable(mnist_hyperparameter_optimization experiments/mnist_hyperparameter_optimization.cpp)
+target_link_libraries(mnist_hyperparameter_optimization ${PROJECT_NAME})
 
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)

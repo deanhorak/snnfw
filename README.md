@@ -55,6 +55,17 @@ Modular input/output framework for connecting SNNs to external data sources and 
 - **Encoding Strategies** - Rate coding, temporal coding, population coding
 - **Decoding Strategies** - Rate decoding, population vector, winner-take-all
 
+### 🎯 Hyperparameter Optimization (NEW!)
+Automated hyperparameter tuning with multiple optimization strategies:
+- **Grid Search** - Exhaustive search over parameter grid
+- **Random Search** - Random sampling of parameter space (recommended)
+- **Bayesian Optimization** - Model-based optimization with Gaussian Process
+- **Genetic Algorithm** - Evolutionary optimization with crossover and mutation
+- **General-Purpose** - Works with any experiment, not just MNIST
+- **Result Tracking** - Automatic saving of all intermediate results
+- **Resume Capability** - Continue interrupted optimization runs
+- **JSON Configuration** - Easy parameter space specification
+
 ### Advanced Features
 - **64-bit Unique IDs** - Support for brain-scale networks (100 trillion objects per type)
 - **ID-Based Storage** - Memory-efficient ID references instead of pointers
@@ -164,6 +175,84 @@ int main() {
 
     return 0;
 }
+```
+
+### Adapter System Usage
+
+```cpp
+#include "snnfw/adapters/RetinaAdapter.h"
+#include "snnfw/ConfigLoader.h"
+
+using namespace snnfw;
+using namespace snnfw::adapters;
+
+// Load configuration
+ConfigLoader loader("../configs/mnist_config_with_adapters.json");
+auto retinaConfig = loader.getAdapterConfig("retina");
+
+// Create retina adapter
+auto retina = std::make_shared<RetinaAdapter>(retinaConfig);
+retina->initialize();
+
+// Process image
+SensoryAdapter::DataSample sample;
+sample.rawData = imagePixels;  // 28x28 grayscale image
+sample.timestamp = 0.0;
+
+retina->processData(sample);
+
+// Get activation pattern for classification
+auto activations = retina->getActivationPattern();
+
+// Train neurons
+for (auto& neuron : retina->getNeurons()) {
+    neuron->learnCurrentPattern();
+}
+```
+
+### Hyperparameter Optimization Usage
+
+```cpp
+#include "snnfw/HyperparameterOptimizer.h"
+
+using namespace snnfw;
+
+// Create optimizer
+auto optimizer = std::make_shared<HyperparameterOptimizer>(
+    OptimizationStrategy::RANDOM_SEARCH);
+
+// Add parameters to optimize
+ParameterSpec gridSize;
+gridSize.name = "network.grid_size";
+gridSize.type = ParameterSpec::Type::INTEGER;
+gridSize.minValue = 5;
+gridSize.maxValue = 9;
+gridSize.step = 1;
+optimizer->addParameter(gridSize);
+
+// Set objective function
+optimizer->setObjective([](const ParameterConfig& params) -> ExperimentResult {
+    double accuracy = runExperiment(params);
+    ExperimentResult result;
+    result.config = params;
+    result.score = accuracy;
+    return result;
+});
+
+// Run optimization
+optimizer->setMaxIterations(50);
+auto best = optimizer->optimize();
+
+std::cout << "Best accuracy: " << best.score << std::endl;
+```
+
+Or use the command-line tool:
+```bash
+# Random search with 50 iterations
+./mnist_hyperparameter_optimization ../configs/mnist_config.json random 50 1000 1000
+
+# Arguments: <config> <strategy> <iterations> <train_samples> <test_samples>
+# Strategies: grid, random, bayesian, genetic
 ```
 
 ## Core Components
@@ -280,8 +369,16 @@ EventObject (base class with scheduled time)
 - **[docs/CONFIGURATION_SYSTEM.md](docs/CONFIGURATION_SYSTEM.md)** - Complete guide to configuration system
 - **[configs/README.md](configs/README.md)** - Available configurations and usage
 
+### Adapter System
+- **[docs/ADAPTER_SYSTEM.md](docs/ADAPTER_SYSTEM.md)** - Complete adapter system guide
+- **[docs/ADAPTER_IMPLEMENTATION_SUMMARY.md](docs/ADAPTER_IMPLEMENTATION_SUMMARY.md)** - Implementation summary
+
+### Hyperparameter Optimization
+- **[docs/HYPERPARAMETER_OPTIMIZATION.md](docs/HYPERPARAMETER_OPTIMIZATION.md)** - Complete optimization guide
+- **[docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md](docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md)** - Implementation summary
+
 ### Experiments
-- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (81.20% accuracy)
+- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (92.70% accuracy with adapters)
 
 ## 🎯 Examples
 
