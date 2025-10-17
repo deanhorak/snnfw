@@ -30,7 +30,7 @@ void Neuron::insertSpike(double spikeTime) {
 
 void Neuron::learnCurrentPattern() {
     if (spikes.empty()) {
-        SNNFW_WARN("Neuron {}: Cannot learn pattern - no spikes in window", getId());
+        SNNFW_DEBUG("Neuron {}: Cannot learn pattern - no spikes in window", getId());
         return;
     }
 

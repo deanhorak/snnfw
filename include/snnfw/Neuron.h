@@ -96,6 +96,12 @@ public:
     const std::vector<std::vector<double>>& getLearnedPatterns() const { return referencePatterns; }
 
     /**
+     * @brief Get all spikes from the rolling window
+     * @return Vector of spike times
+     */
+    std::vector<double> getSpikes() const { return spikes; }
+
+    /**
      * @brief Clear all spikes from the rolling window
      */
     void clearSpikes() { spikes.clear(); }

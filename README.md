@@ -44,6 +44,17 @@ Biologically-accurate hierarchical organization with **named objects**:
 - **SONATANetworkBuilder** - Build networks from SONATA files
 - **Multiple Configurations** - Easy parameter sweeps and ablation studies
 
+### 🔌 Adapter System (NEW!)
+Modular input/output framework for connecting SNNs to external data sources and actuators:
+- **SensoryAdapters** - Convert external data (images, audio, sensors) into spike trains
+- **MotorAdapters** - Convert spike trains into external actions (displays, motors, actuators)
+- **RetinaAdapter** - Visual processing with edge detection (7×7 grid, 8 orientations, 392 neurons)
+- **AudioAdapter** - Audio processing with FFT and mel-scale frequency channels
+- **DisplayAdapter** - Neural activity visualization (raster, heatmap, vector, ASCII modes)
+- **Custom Adapters** - Easy creation of domain-specific adapters
+- **Encoding Strategies** - Rate coding, temporal coding, population coding
+- **Decoding Strategies** - Rate decoding, population vector, winner-take-all
+
 ### Advanced Features
 - **64-bit Unique IDs** - Support for brain-scale networks (100 trillion objects per type)
 - **ID-Based Storage** - Memory-efficient ID references instead of pointers
@@ -290,16 +301,73 @@ make experiment_config_example
 ./experiment_config_example
 ```
 
+## 🔌 Adapter System
+
+The Adapter System provides a modular framework for connecting SNNs to external data sources and actuators. This transforms SNNFW from a specialized framework into a general-purpose neuromorphic computing platform.
+
+### Quick Start with Adapters
+
+```cpp
+#include "snnfw/adapters/RetinaAdapter.h"
+
+// Create and configure adapter
+BaseAdapter::Config config;
+config.name = "retina";
+config.temporalWindow = 100.0;
+config.intParams["grid_width"] = 7;
+config.intParams["grid_height"] = 7;
+config.intParams["num_orientations"] = 8;
+
+auto retina = std::make_shared<RetinaAdapter>(config);
+retina->initialize();
+
+// Process image data
+std::vector<uint8_t> imageData = loadImage("digit.png", 28, 28);
+retina->processData(imageData);
+
+// Get neural activation pattern
+auto activations = retina->getActivationPattern();
+```
+
+### Available Adapters
+
+- **RetinaAdapter** - Visual processing with edge detection (92.70% MNIST accuracy)
+- **AudioAdapter** - Audio processing with FFT and mel-scale channels
+- **DisplayAdapter** - Neural activity visualization (raster, heatmap, vector, ASCII)
+- **Custom Adapters** - Easy to create domain-specific adapters
+
+### Examples
+
+```bash
+cd build
+
+# MNIST with RetinaAdapter (92.70% accuracy)
+make mnist_with_adapters -j4
+./mnist_with_adapters ../configs/mnist_config_with_adapters.json
+
+# Display visualization
+make display_visualization -j4
+./display_visualization
+
+# Custom temperature sensor adapter
+make custom_adapter -j4
+./custom_adapter
+```
+
+See **[docs/ADAPTER_SYSTEM.md](docs/ADAPTER_SYSTEM.md)** for complete documentation.
+
 ## 🧠 MNIST Digit Recognition
 
 The `experiments/` directory contains MNIST digit recognition experiments demonstrating spike-based pattern matching:
 
-**Current Best Result: 81.20% accuracy** using:
-- Edge-based feature detection (8 orientations)
+**Current Best Result: 92.70% accuracy** using:
+- RetinaAdapter with edge detection (8 orientations)
 - Spike-based pattern learning
 - k-Nearest Neighbors classification (k=5)
-- 7×7 spatial grid (49 regions)
-- Configurable via JSON and SONATA format
+- 7×7 spatial grid (392 neurons)
+- Configurable via JSON
+
+**Previous Result: 81.20% accuracy** (inline implementation)
 
 See **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** for complete details.
 

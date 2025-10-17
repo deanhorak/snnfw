@@ -85,12 +85,20 @@ message(STATUS "Fetching libsonata...")
 option(SONATA_TESTS "Build libsonata tests" OFF)
 option(SONATA_PYTHON "Build libsonata Python bindings" OFF)
 option(EXTLIB_FROM_SUBMODULES "Use git submodules for external libraries" OFF)
+
+# Temporarily disable warnings-as-errors for libsonata
+set(CMAKE_CXX_FLAGS_BACKUP "${CMAKE_CXX_FLAGS}")
+string(REPLACE "-Werror" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
 FetchContent_Declare(
     libsonata
     GIT_REPOSITORY https://github.com/BlueBrain/libsonata.git
     GIT_TAG v0.1.27
 )
 FetchContent_MakeAvailable(libsonata)
+
+# Restore original flags
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS_BACKUP}")
 
 # Find RocksDB for persistent storage
 message(STATUS "Looking for RocksDB...")
@@ -132,6 +140,9 @@ set(LIB_SOURCES
     src/Datastore.cpp
     src/MNISTLoader.cpp
     src/STDPLearning.cpp
+    src/adapters/RetinaAdapter.cpp
+    src/adapters/DisplayAdapter.cpp
+    src/adapters/AudioAdapter.cpp
 )
 
 # Create the library
@@ -233,6 +244,14 @@ target_include_directories(mnist_optimized PRIVATE
 
 add_executable(mnist_pattern_diversity experiments/mnist_pattern_diversity.cpp)
 target_link_libraries(mnist_pattern_diversity ${PROJECT_NAME})
+
+add_executable(mnist_with_adapters experiments/mnist_with_adapters.cpp)
+find_package(CURL REQUIRED)
+target_link_libraries(mnist_with_adapters ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl)
+target_include_directories(mnist_with_adapters PRIVATE
+    ${highfive_SOURCE_DIR}/include
+    ${libsonata_SOURCE_DIR}/include
+)
 
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)
