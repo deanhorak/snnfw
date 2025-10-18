@@ -3,6 +3,8 @@
 
 #include "snnfw/adapters/SensoryAdapter.h"
 #include "snnfw/Neuron.h"
+#include "snnfw/features/EdgeOperator.h"
+#include "snnfw/encoding/EncodingStrategy.h"
 #include <vector>
 #include <memory>
 #include <cmath>
@@ -34,6 +36,18 @@ namespace adapters {
  * - neuron_window_size: Temporal window for pattern learning (ms)
  * - neuron_threshold: Similarity threshold for pattern matching
  * - neuron_max_patterns: Maximum patterns per neuron
+ * - edge_operator: Type of edge operator ("sobel", "gabor", "dog") [default: "sobel"]
+ * - encoding_strategy: Type of encoding ("rate", "temporal", "population") [default: "rate"]
+ *
+ * Edge Operator Parameters (in edge_operator_params):
+ * - wavelength: Gabor wavelength (default: 4.0)
+ * - sigma: Gabor/DoG sigma (default: 2.0)
+ * - gamma: Gabor aspect ratio (default: 0.5)
+ * - kernel_size: Filter kernel size (default: 5)
+ *
+ * Encoding Strategy Parameters (in encoding_params):
+ * - dual_spike_mode: Temporal encoder dual spike (default: false)
+ * - population_size: Population encoder size (default: 5)
  *
  * Usage:
  * @code
@@ -164,17 +178,21 @@ private:
     int numOrientations_;       ///< Number of edge orientations
     double edgeThreshold_;      ///< Minimum edge strength
     double temporalWindow_;     ///< Spike pattern duration (ms)
-    
+
     // Neuron parameters
     double neuronWindowSize_;   ///< Neuron temporal window (ms)
     double neuronThreshold_;    ///< Neuron similarity threshold
     int neuronMaxPatterns_;     ///< Max patterns per neuron
-    
+
+    // Pluggable strategies
+    std::unique_ptr<features::EdgeOperator> edgeOperator_;      ///< Edge detection strategy
+    std::unique_ptr<encoding::EncodingStrategy> encodingStrategy_; ///< Spike encoding strategy
+
     // Neuron population
     // Structure: neurons_[region_row * gridSize + region_col][orientation]
     std::vector<std::vector<std::shared_ptr<Neuron>>> neuronGrid_;
     std::vector<std::shared_ptr<Neuron>> neurons_;  ///< Flat list for easy access
-    
+
     // Image dimensions (set during first processData call)
     int imageRows_;
     int imageCols_;

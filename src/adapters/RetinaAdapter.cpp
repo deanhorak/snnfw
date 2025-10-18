@@ -1,4 +1,12 @@
 #include "snnfw/adapters/RetinaAdapter.h"
+#include "snnfw/features/EdgeOperator.h"
+#include "snnfw/features/SobelOperator.h"
+#include "snnfw/features/GaborOperator.h"
+#include "snnfw/features/DoGOperator.h"
+#include "snnfw/encoding/EncodingStrategy.h"
+#include "snnfw/encoding/RateEncoder.h"
+#include "snnfw/encoding/TemporalEncoder.h"
+#include "snnfw/encoding/PopulationEncoder.h"
 #include "snnfw/Logger.h"
 #include <algorithm>
 #include <cmath>
@@ -24,13 +32,53 @@ RetinaAdapter::RetinaAdapter(const Config& config)
     numOrientations_ = getIntParam("num_orientations", 8);
     edgeThreshold_ = getDoubleParam("edge_threshold", 0.15);
     temporalWindow_ = config.temporalWindow > 0 ? config.temporalWindow : 100.0;
-    
+
     neuronWindowSize_ = getDoubleParam("neuron_window_size", 200.0);
     neuronThreshold_ = getDoubleParam("neuron_threshold", 0.7);
     neuronMaxPatterns_ = getIntParam("neuron_max_patterns", 100);
-    
-    SNNFW_INFO("RetinaAdapter '{}': grid={}x{}, orientations={}, threshold={}", 
-               getName(), gridSize_, gridSize_, numOrientations_, edgeThreshold_);
+
+    // Create edge operator
+    std::string edgeOperatorType = getStringParam("edge_operator", "sobel");
+    features::EdgeOperator::Config edgeConfig;
+    edgeConfig.name = edgeOperatorType;
+    edgeConfig.numOrientations = numOrientations_;
+    edgeConfig.edgeThreshold = edgeThreshold_;
+
+    // Copy edge operator parameters from config
+    if (config.stringParams.count("edge_operator_params") > 0) {
+        // Parse nested params if needed - for now use direct params
+    }
+    edgeConfig.doubleParams["wavelength"] = getDoubleParam("wavelength", 4.0);
+    edgeConfig.doubleParams["sigma"] = getDoubleParam("sigma", 2.0);
+    edgeConfig.doubleParams["gamma"] = getDoubleParam("gamma", 0.5);
+    edgeConfig.doubleParams["phase_offset"] = getDoubleParam("phase_offset", 0.0);
+    edgeConfig.doubleParams["sigma1"] = getDoubleParam("sigma1", 1.0);
+    edgeConfig.doubleParams["sigma2"] = getDoubleParam("sigma2", 1.6);
+    edgeConfig.intParams["kernel_size"] = getIntParam("kernel_size", 5);
+
+    edgeOperator_ = features::EdgeOperatorFactory::create(edgeOperatorType, edgeConfig);
+
+    // Create encoding strategy
+    std::string encodingType = getStringParam("encoding_strategy", "rate");
+    encoding::EncodingStrategy::Config encodingConfig;
+    encodingConfig.name = encodingType;
+    encodingConfig.temporalWindow = temporalWindow_;
+    encodingConfig.baselineTime = 0.0;
+    encodingConfig.intensityScale = temporalWindow_;
+
+    // Copy encoding parameters
+    encodingConfig.doubleParams["timing_jitter"] = getDoubleParam("timing_jitter", 0.0);
+    encodingConfig.doubleParams["min_spike_interval"] = getDoubleParam("min_spike_interval", 5.0);
+    encodingConfig.doubleParams["tuning_width"] = getDoubleParam("tuning_width", 0.3);
+    encodingConfig.doubleParams["min_response"] = getDoubleParam("min_response", 0.1);
+    encodingConfig.intParams["dual_spike_mode"] = getIntParam("dual_spike_mode", 0);
+    encodingConfig.intParams["population_size"] = getIntParam("population_size", 5);
+
+    encodingStrategy_ = encoding::EncodingStrategyFactory::create(encodingType, encodingConfig);
+
+    SNNFW_INFO("RetinaAdapter '{}': grid={}x{}, orientations={}, threshold={}, edge={}, encoding={}",
+               getName(), gridSize_, gridSize_, numOrientations_, edgeThreshold_,
+               edgeOperatorType, encodingType);
 }
 
 bool RetinaAdapter::initialize() {
@@ -90,89 +138,8 @@ std::vector<uint8_t> RetinaAdapter::extractRegion(const Image& image,
 
 std::vector<double> RetinaAdapter::extractEdgeFeatures(const std::vector<uint8_t>& region,
                                                         int regionSize) const {
-    std::vector<double> features(numOrientations_, 0.0);
-
-    // Edge detection with Gabor-like filters at multiple orientations
-    for (int r = 1; r < regionSize - 1; ++r) {
-        for (int c = 1; c < regionSize - 1; ++c) {
-            int idx = r * regionSize + c;
-            double center = static_cast<double>(region[idx]);
-
-            // Get neighbors
-            double top = static_cast<double>(region[(r-1) * regionSize + c]);
-            double bottom = static_cast<double>(region[(r+1) * regionSize + c]);
-            double left = static_cast<double>(region[r * regionSize + (c-1)]);
-            double right = static_cast<double>(region[r * regionSize + (c+1)]);
-            double topLeft = static_cast<double>(region[(r-1) * regionSize + (c-1)]);
-            double topRight = static_cast<double>(region[(r-1) * regionSize + (c+1)]);
-            double bottomLeft = static_cast<double>(region[(r+1) * regionSize + (c-1)]);
-            double bottomRight = static_cast<double>(region[(r+1) * regionSize + (c+1)]);
-
-            // Calculate gradients for up to 8 orientations (based on numOrientations_)
-            // Only compute the orientations we actually need
-            if (numOrientations_ >= 1) {
-                // 0° (horizontal)
-                features[0] += std::abs(right - left);
-            }
-
-            if (numOrientations_ >= 2) {
-                // 22.5°
-                features[1] += std::abs(topRight - bottomLeft);
-            }
-
-            if (numOrientations_ >= 3) {
-                // 45° (diagonal)
-                features[2] += std::abs(top + topRight - bottom - bottomLeft);
-            }
-
-            if (numOrientations_ >= 4) {
-                // 67.5°
-                features[3] += std::abs(topRight - bottomLeft);
-            }
-
-            if (numOrientations_ >= 5) {
-                // 90° (vertical)
-                features[4] += std::abs(bottom - top);
-            }
-
-            if (numOrientations_ >= 6) {
-                // 112.5°
-                features[5] += std::abs(bottomRight - topLeft);
-            }
-
-            if (numOrientations_ >= 7) {
-                // 135° (diagonal)
-                features[6] += std::abs(bottom + bottomRight - top - topLeft);
-            }
-
-            if (numOrientations_ >= 8) {
-                // 157.5°
-                features[7] += std::abs(bottomRight - topLeft);
-            }
-
-            // For more than 8 orientations, distribute evenly across 180 degrees
-            for (int orient = 8; orient < numOrientations_; ++orient) {
-                double angle = (orient * 180.0) / numOrientations_;
-                double radians = angle * M_PI / 180.0;
-                double dx = std::cos(radians);
-                double dy = std::sin(radians);
-
-                // Approximate gradient in this direction
-                double grad = std::abs(dx * (right - left) + dy * (bottom - top));
-                features[orient] += grad;
-            }
-        }
-    }
-    
-    // Normalize features
-    double maxFeature = *std::max_element(features.begin(), features.end());
-    if (maxFeature > 0.0) {
-        for (double& f : features) {
-            f /= maxFeature;
-        }
-    }
-    
-    return features;
+    // Use pluggable edge operator
+    return edgeOperator_->extractEdges(region, regionSize);
 }
 
 std::vector<double> RetinaAdapter::featuresToSpikes(const std::vector<double>& features) const {
@@ -234,31 +201,52 @@ SensoryAdapter::SpikePattern RetinaAdapter::encodeFeatures(const FeatureVector& 
     pattern.timestamp = features.timestamp;
     pattern.duration = temporalWindow_;
     pattern.spikeTimes.resize(neurons_.size());
-    
+
     // Clear all neurons first
     clearNeuronStates();
-    
+
+    // Get neurons per feature from encoding strategy
+    int neuronsPerFeature = encodingStrategy_->getNeuronsPerFeature();
+
     // Encode features as spikes and insert into neurons
     size_t featureIdx = 0;
     for (int row = 0; row < gridSize_; ++row) {
         for (int col = 0; col < gridSize_; ++col) {
             for (int orient = 0; orient < numOrientations_; ++orient) {
                 double featureValue = features.features[featureIdx++];
-                
-                // Only generate spike if above threshold
-                if (featureValue >= edgeThreshold_) {
-                    double spikeTime = featureToSpikeTime(featureValue, temporalWindow_);
-                    if (spikeTime >= 0.0) {
-                        auto& neuron = neuronGrid_[row * gridSize_ + col][orient];
+
+                // Use encoding strategy to generate spike times
+                std::vector<double> spikeTimes = encodingStrategy_->encode(featureValue, orient);
+
+                // For rate/temporal encoding (1 neuron per feature), insert into single neuron
+                if (neuronsPerFeature == 1) {
+                    auto& neuron = neuronGrid_[row * gridSize_ + col][orient];
+                    int neuronIdx = row * gridSize_ * numOrientations_ +
+                                   col * numOrientations_ + orient;
+
+                    for (double spikeTime : spikeTimes) {
                         neuron->insertSpike(spikeTime);
-                        pattern.spikeTimes[row * gridSize_ * numOrientations_ + 
-                                          col * numOrientations_ + orient].push_back(spikeTime);
+                        pattern.spikeTimes[neuronIdx].push_back(spikeTime);
+                    }
+                } else {
+                    // For population encoding (multiple neurons per feature)
+                    // Each spike goes to a different neuron in the population
+                    // Note: This requires neuron structure to support population encoding
+                    // For now, we'll distribute spikes across the single neuron
+                    // TODO: Extend neuron grid to support population encoding
+                    auto& neuron = neuronGrid_[row * gridSize_ + col][orient];
+                    int neuronIdx = row * gridSize_ * numOrientations_ +
+                                   col * numOrientations_ + orient;
+
+                    for (double spikeTime : spikeTimes) {
+                        neuron->insertSpike(spikeTime);
+                        pattern.spikeTimes[neuronIdx].push_back(spikeTime);
                     }
                 }
             }
         }
     }
-    
+
     return pattern;
 }
 
