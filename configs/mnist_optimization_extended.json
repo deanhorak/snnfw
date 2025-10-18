@@ -1,0 +1,153 @@
+{
+  "experiment": {
+    "name": "mnist_hyperparameter_optimization_extended",
+    "description": "Extended hyperparameter optimization for MNIST with structural parameters",
+    "version": "2.0.0"
+  },
+  "mnist_data_path": "../data/mnist",
+  "optimization": {
+    "strategy": "random",
+    "max_iterations": 100,
+    "num_workers": 1,
+    "save_intermediate_results": true,
+    "results_dir": "optimization_results_extended"
+  },
+  "training": {
+    "samples_per_digit": 1000,
+    "test_samples": 1000
+  },
+  "parameter_space": {
+    "network.grid_size": {
+      "type": "integer",
+      "min": 4,
+      "max": 10,
+      "step": 1,
+      "description": "Spatial grid size (4x4 to 10x10) - affects receptive field size"
+    },
+    "network.num_orientations": {
+      "type": "integer",
+      "min": 4,
+      "max": 16,
+      "step": 2,
+      "description": "Number of edge orientations - more orientations = finer edge detection"
+    },
+    "network.edge_threshold": {
+      "type": "double",
+      "min": 0.01,
+      "max": 0.5,
+      "step": 0.01,
+      "description": "Minimum edge strength to generate spikes - lower = more sensitive"
+    },
+    "neuron.similarity_threshold": {
+      "type": "double",
+      "min": 0.3,
+      "max": 0.95,
+      "step": 0.05,
+      "description": "Pattern matching threshold - lower = more generalization"
+    },
+    "neuron.max_patterns": {
+      "type": "integer",
+      "min": 10,
+      "max": 300,
+      "step": 10,
+      "description": "Maximum patterns per neuron - more = better memory, slower"
+    },
+    "neuron.window_size_ms": {
+      "type": "double",
+      "min": 25.0,
+      "max": 500.0,
+      "step": 25.0,
+      "description": "Temporal window for spike patterns - affects temporal resolution"
+    },
+    "classification.k_neighbors": {
+      "type": "integer",
+      "min": 1,
+      "max": 25,
+      "step": 2,
+      "description": "k-NN parameter - higher k = smoother decision boundaries"
+    },
+    "encoding.spike_timing_mode": {
+      "type": "categorical",
+      "values": ["rate_coding", "temporal_coding", "population_coding"],
+      "description": "How features are encoded into spike times"
+    },
+    "encoding.spike_intensity_scale": {
+      "type": "double",
+      "min": 0.1,
+      "max": 5.0,
+      "step": 0.1,
+      "description": "Scaling factor for spike timing based on feature intensity"
+    },
+    "encoding.baseline_spike_time": {
+      "type": "double",
+      "min": 0.0,
+      "max": 100.0,
+      "step": 10.0,
+      "description": "Baseline spike time offset (ms)"
+    },
+    "preprocessing.normalization": {
+      "type": "categorical",
+      "values": ["none", "global", "local", "adaptive"],
+      "description": "Image normalization strategy"
+    },
+    "preprocessing.contrast_enhancement": {
+      "type": "double",
+      "min": 0.5,
+      "max": 2.0,
+      "step": 0.1,
+      "description": "Contrast enhancement factor (1.0 = no enhancement)"
+    },
+    "feature_extraction.edge_operator": {
+      "type": "categorical",
+      "values": ["sobel", "gabor", "difference_of_gaussians"],
+      "description": "Edge detection operator type"
+    },
+    "feature_extraction.spatial_pooling": {
+      "type": "categorical",
+      "values": ["none", "max", "average", "sum"],
+      "description": "Spatial pooling within regions"
+    },
+    "learning.pattern_update_strategy": {
+      "type": "categorical",
+      "values": ["append", "replace_worst", "merge_similar"],
+      "description": "How to update neuron patterns when max_patterns is reached"
+    },
+    "learning.similarity_metric": {
+      "type": "categorical",
+      "values": ["cosine", "euclidean", "manhattan", "correlation"],
+      "description": "Metric for comparing activation patterns"
+    },
+    "classification.voting_strategy": {
+      "type": "categorical",
+      "values": ["majority", "weighted_distance", "weighted_similarity"],
+      "description": "How k-NN votes are aggregated"
+    },
+    "classification.distance_weighting": {
+      "type": "double",
+      "min": 0.0,
+      "max": 2.0,
+      "step": 0.1,
+      "description": "Exponent for distance-weighted voting (0 = uniform)"
+    },
+    "network.neurons_per_orientation": {
+      "type": "integer",
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "description": "Number of neurons per orientation (population coding)"
+    },
+    "network.lateral_inhibition": {
+      "type": "categorical",
+      "values": ["none", "winner_take_all", "soft_competition"],
+      "description": "Lateral inhibition between neurons in same region"
+    },
+    "network.temporal_integration": {
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.1,
+      "description": "Temporal integration factor for multi-frame processing"
+    }
+  }
+}
+
