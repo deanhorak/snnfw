@@ -13,29 +13,34 @@ namespace snnfw {
 namespace adapters {
 
 /**
- * @brief Retina adapter for processing visual input
+ * @brief Retina adapter for processing visual input with pluggable edge detection and encoding
  *
  * The RetinaAdapter mimics the early visual processing in the retina and V1 cortex:
  * - Spatial grid decomposition (receptive fields)
- * - Edge detection with multiple orientations (simple cells)
- * - Rate coding (feature intensity → spike timing)
+ * - Pluggable edge detection with multiple orientations (simple cells)
+ * - Pluggable spike encoding strategies (rate, temporal, population coding)
  * - Population of orientation-selective neurons
  *
  * Architecture:
- * - Input: Grayscale images (any size)
- * - Spatial Grid: Divides image into regions (e.g., 7×7 grid)
- * - Edge Detectors: Multiple orientations per region (e.g., 8 orientations)
+ * - Input: Grayscale images (any size, typically 28×28 for MNIST)
+ * - Spatial Grid: Divides image into regions (e.g., 8×8 grid for optimal MNIST accuracy)
+ * - Edge Detectors: Multiple orientations per region (8 orientations recommended)
  * - Neurons: One neuron per (region, orientation) pair
  * - Output: Spike patterns encoding edge features
  *
+ * Performance (MNIST):
+ * - 8×8 grid + Sobel + Rate: 94.63% accuracy (current best)
+ * - 7×7 grid + Sobel + Rate: 92.71% accuracy
+ * - 8×8 grid + Gabor + Rate: 87.20% accuracy (Gabor worse for sharp edges)
+ *
  * Configuration Parameters:
- * - grid_size: Number of regions per dimension (e.g., 7 for 7×7 grid)
- * - num_orientations: Number of edge orientations (e.g., 8)
- * - edge_threshold: Minimum edge strength to generate spikes
- * - temporal_window: Duration of spike pattern (ms)
- * - neuron_window_size: Temporal window for pattern learning (ms)
- * - neuron_threshold: Similarity threshold for pattern matching
- * - neuron_max_patterns: Maximum patterns per neuron
+ * - grid_size: Number of regions per dimension (8 recommended for MNIST)
+ * - num_orientations: Number of edge orientations (8 recommended)
+ * - edge_threshold: Minimum edge strength to generate spikes (0.15 default)
+ * - temporal_window: Duration of spike pattern in ms (200.0 default)
+ * - neuron_window_size: Temporal window for pattern learning in ms (200.0 default)
+ * - neuron_threshold: Similarity threshold for pattern matching (0.7 default)
+ * - neuron_max_patterns: Maximum patterns per neuron (100 default)
  * - edge_operator: Type of edge operator ("sobel", "gabor", "dog") [default: "sobel"]
  * - encoding_strategy: Type of encoding ("rate", "temporal", "population") [default: "rate"]
  *
@@ -51,19 +56,26 @@ namespace adapters {
  *
  * Usage:
  * @code
+ * // For optimal MNIST accuracy (94.63%)
  * BaseAdapter::Config config;
  * config.type = "retina";
- * config.name = "left_eye";
- * config.setIntParam("grid_size", 7);
+ * config.name = "visual_cortex";
+ * config.setIntParam("grid_size", 8);  // 8×8 grid for best accuracy
  * config.setIntParam("num_orientations", 8);
- * 
+ * config.setDoubleParam("edge_threshold", 0.15);
+ * config.setStringParam("edge_operator", "sobel");  // Best for MNIST
+ * config.setStringParam("encoding_strategy", "rate");
+ *
  * RetinaAdapter retina(config);
  * retina.initialize();
- * 
+ *
  * // Process image
  * SensoryAdapter::DataSample sample;
- * sample.rawData = imagePixels; // 28×28 grayscale
+ * sample.rawData = imagePixels; // 28×28 grayscale MNIST image
  * auto spikes = retina.processData(sample);
+ *
+ * // Get activation pattern for classification
+ * auto activations = retina.getActivationPattern();  // 512-dimensional vector (8×8×8)
  * @endcode
  */
 class RetinaAdapter : public SensoryAdapter {

@@ -1,3 +1,29 @@
+/**
+ * @file SobelOperator.cpp
+ * @brief Implementation of Sobel edge detection operator
+ *
+ * The Sobel operator is a gradient-based edge detection method that computes
+ * the intensity gradient at each pixel using convolution with Sobel kernels.
+ * It is particularly effective for detecting sharp edges in images.
+ *
+ * Performance on MNIST:
+ * - 8×8 grid: 94.63% accuracy (current best)
+ * - 7×7 grid: 92.71% accuracy
+ * - Superior to Gabor filters (87.20%) for sharp-edged digits
+ *
+ * Why Sobel works well for MNIST:
+ * - MNIST digits have sharp, high-contrast edges
+ * - Sobel is optimized for detecting intensity discontinuities
+ * - Fast computation compared to Gabor filters
+ * - Simple gradient-based approach is sufficient for binary-like images
+ *
+ * Implementation:
+ * - Computes oriented gradients at 8 standard orientations (0°, 22.5°, 45°, etc.)
+ * - Uses 3×3 neighborhood for gradient computation
+ * - Normalizes edge strengths to [0, 1] range
+ * - Applies configurable threshold to suppress weak edges
+ */
+
 #include "snnfw/features/SobelOperator.h"
 #include <cmath>
 #include <algorithm>
@@ -12,17 +38,38 @@ namespace features {
 SobelOperator::SobelOperator(const Config& config)
     : EdgeOperator(config) {}
 
+/**
+ * @brief Compute gradient strength in a specific orientation
+ *
+ * Computes the edge strength at a specific orientation by examining the
+ * intensity differences in the 3×3 neighborhood of each pixel.
+ *
+ * Orientations (for 8-orientation configuration):
+ * - 0°: Horizontal edges (left-right gradient)
+ * - 22.5°: Diagonal edges
+ * - 45°: Diagonal edges (top-right to bottom-left)
+ * - 67.5°: Diagonal edges
+ * - 90°: Vertical edges (top-bottom gradient)
+ * - 112.5°: Diagonal edges
+ * - 135°: Diagonal edges (top-left to bottom-right)
+ * - 157.5°: Diagonal edges
+ *
+ * @param region Pixel values of the region (regionSize² elements)
+ * @param regionSize Size of the region (width = height)
+ * @param orientation Orientation index (0 to numOrientations-1)
+ * @return Total gradient strength in this orientation (unnormalized)
+ */
 double SobelOperator::computeOrientedGradient(
     const std::vector<uint8_t>& region,
     int regionSize,
     int orientation) const {
-    
+
     double gradient = 0.0;
-    
-    // Compute gradient for each pixel (excluding borders)
+
+    // Compute gradient for each pixel (excluding borders to avoid out-of-bounds)
     for (int r = 1; r < regionSize - 1; ++r) {
         for (int c = 1; c < regionSize - 1; ++c) {
-            // Get 8 neighbors
+            // Get 8 neighbors (normalized to [0, 1])
             double top = getPixelNormalized(region, r-1, c, regionSize);
             double bottom = getPixelNormalized(region, r+1, c, regionSize);
             double left = getPixelNormalized(region, r, c-1, regionSize);

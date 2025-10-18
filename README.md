@@ -378,7 +378,7 @@ EventObject (base class with scheduled time)
 - **[docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md](docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md)** - Implementation summary
 
 ### Experiments
-- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (92.70% accuracy with adapters)
+- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (94.63% accuracy with 8×8 grid)
 
 ## 🎯 Examples
 
@@ -428,7 +428,7 @@ auto activations = retina->getActivationPattern();
 
 ### Available Adapters
 
-- **RetinaAdapter** - Visual processing with edge detection (92.70% MNIST accuracy)
+- **RetinaAdapter** - Visual processing with edge detection (94.63% MNIST accuracy)
 - **AudioAdapter** - Audio processing with FFT and mel-scale channels
 - **DisplayAdapter** - Neural activity visualization (raster, heatmap, vector, ASCII)
 - **Custom Adapters** - Easy to create domain-specific adapters
@@ -438,9 +438,9 @@ auto activations = retina->getActivationPattern();
 ```bash
 cd build
 
-# MNIST with RetinaAdapter (92.70% accuracy)
+# MNIST with RetinaAdapter (94.63% accuracy with 8×8 grid)
 make mnist_with_adapters -j4
-./mnist_with_adapters ../configs/mnist_config_with_adapters.json
+./mnist_with_adapters ../configs/mnist_sobel_rate_8x8.json
 
 # Display visualization
 make display_visualization -j4
@@ -457,14 +457,16 @@ See **[docs/ADAPTER_SYSTEM.md](docs/ADAPTER_SYSTEM.md)** for complete documentat
 
 The `experiments/` directory contains MNIST digit recognition experiments demonstrating spike-based pattern matching:
 
-**Current Best Result: 92.70% accuracy** using:
-- RetinaAdapter with edge detection (8 orientations)
+**Current Best Result: 94.63% accuracy** using:
+- RetinaAdapter with Sobel edge detection (8 orientations)
 - Spike-based pattern learning
 - k-Nearest Neighbors classification (k=5)
-- 7×7 spatial grid (392 neurons)
+- **8×8 spatial grid (512 neurons)** - Optimized for higher spatial resolution
 - Configurable via JSON
 
-**Previous Result: 81.20% accuracy** (inline implementation)
+**Previous Results:**
+- 92.71% accuracy (7×7 grid, 392 neurons)
+- 81.20% accuracy (inline implementation)
 
 See **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** for complete details.
 
@@ -486,10 +488,15 @@ LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH SPDLOG_LEVEL=error ./
 
 ### Available Configurations
 
-- **`mnist_config.json`** - Default (81.20% accuracy, 7×7 grid, k=5)
-- **`mnist_config_5x5.json`** - Smaller grid (faster, ~75-78% accuracy)
-- **`mnist_config_k3.json`** - k=3 neighbors
-- **`mnist_config_k10.json`** - k=10 neighbors
+**Optimized Configurations (with Adapter System):**
+- **`mnist_sobel_rate_8x8.json`** - **Best: 94.63% accuracy** (8×8 grid, 512 neurons)
+- **`mnist_sobel_rate_9x9.json`** - 94.61% accuracy (9×9 grid, 648 neurons)
+- **`mnist_sobel_rate.json`** - 92.71% accuracy (7×7 grid, 392 neurons)
+- **`mnist_sobel_rate_5x5.json`** - 89.90% accuracy (5×5 grid, 200 neurons)
+- **`mnist_sobel_rate_4x4.json`** - 83.20% accuracy (4×4 grid, 128 neurons)
+
+**Legacy Configurations:**
+- **`mnist_config.json`** - 81.20% accuracy (7×7 grid, inline implementation)
 - **`mnist_config_fast.json`** - Quick testing (1000 examples/digit)
 - **`mnist_config_no_sonata.json`** - Manual network construction
 
