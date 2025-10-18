@@ -263,6 +263,9 @@ target_include_directories(mnist_with_adapters PRIVATE
     ${libsonata_SOURCE_DIR}/include
 )
 
+add_executable(debug_gabor experiments/debug_gabor.cpp)
+target_link_libraries(debug_gabor ${PROJECT_NAME})
+
 add_executable(mnist_hyperparameter_optimization experiments/mnist_hyperparameter_optimization.cpp)
 target_link_libraries(mnist_hyperparameter_optimization ${PROJECT_NAME})
 

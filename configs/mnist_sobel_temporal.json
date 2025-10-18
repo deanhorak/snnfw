@@ -1,14 +1,14 @@
 {
   "experiment": {
-    "name": "mnist_gabor_rate",
-    "description": "MNIST with Gabor filters + Rate encoding (test Gabor alone)",
+    "name": "mnist_sobel_temporal",
+    "description": "MNIST with Sobel + Temporal encoding (Test temporal encoding)",
     "version": "3.0.0"
   },
   "network": {
     "grid_size": 7,
     "region_size": 4,
     "num_orientations": 8,
-    "neurons_per_feature": 1,
+    "neurons_per_feature": 2,
     "temporal_window_ms": 200.0,
     "edge_threshold": 0.15,
     "orientations_degrees": [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5]
@@ -30,13 +30,11 @@
         "neuron_window_size": 200.0,
         "neuron_threshold": 0.7,
         "neuron_max_patterns": 100,
-        "edge_operator": "gabor",
-        "encoding_strategy": "rate",
-        "wavelength": 2.0,
-        "sigma": 1.0,
-        "gamma": 0.5,
-        "phase_offset": 0.0,
-        "kernel_size": 3
+        "edge_operator": "sobel",
+        "encoding_strategy": "temporal",
+        "dual_spike_mode": 1,
+        "timing_jitter": 0.5,
+        "min_spike_interval": 5.0
       }
     }
   },
@@ -66,7 +64,7 @@
     "show_progress": true,
     "show_confusion_matrix": true,
     "save_results": true,
-    "results_file": "results/mnist_gabor_rate_results.json"
+    "results_file": "results/mnist_sobel_temporal_results.json"
   }
 }
 
