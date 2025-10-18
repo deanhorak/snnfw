@@ -145,6 +145,10 @@ set(LIB_SOURCES
     src/adapters/RetinaAdapter.cpp
     src/adapters/DisplayAdapter.cpp
     src/adapters/AudioAdapter.cpp
+    src/encoding/RateEncoder.cpp
+    src/encoding/TemporalEncoder.cpp
+    src/encoding/PopulationEncoder.cpp
+    src/encoding/EncodingStrategyFactory.cpp
 )
 
 # Create the library
