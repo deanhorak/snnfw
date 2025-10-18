@@ -149,6 +149,10 @@ set(LIB_SOURCES
     src/encoding/TemporalEncoder.cpp
     src/encoding/PopulationEncoder.cpp
     src/encoding/EncodingStrategyFactory.cpp
+    src/features/SobelOperator.cpp
+    src/features/GaborOperator.cpp
+    src/features/DoGOperator.cpp
+    src/features/EdgeOperatorFactory.cpp
 )
 
 # Create the library
