@@ -649,7 +649,7 @@ int main(int argc, char* argv[]) {
         std::cout << "✓ Loaded " << testLoader.size() << " test images" << std::endl;
 
         // Training
-        std::cout << "\n=== Training Phase ===" << std::endl;
+        std::cout << "\n=== Training Phase (Spike-Based with STDP) ===" << std::endl;
         auto trainStart = std::chrono::steady_clock::now();
 
         // First pass: collect indices of images to train on
@@ -664,11 +664,9 @@ int main(int argc, char* argv[]) {
         }
 
         std::cout << "  Selected " << trainingIndices.size() << " training images" << std::endl;
+        std::cout << "  Using spike-based forward propagation with STDP learning" << std::endl;
 
-        // Second pass: process images sequentially (neurons are not thread-safe for learning)
-        std::vector<ClassificationStrategy::LabeledPattern> trainingPatterns;
-        trainingPatterns.reserve(trainingIndices.size());
-
+        // Second pass: process images sequentially with spike-based propagation
         for (size_t idx = 0; idx < trainingIndices.size(); ++idx) {
             size_t i = trainingIndices[idx];
             int label = trainLoader.getImage(i).label;
@@ -679,32 +677,82 @@ int main(int argc, char* argv[]) {
             img.rows = trainLoader.getImage(i).rows;
             img.cols = trainLoader.getImage(i).cols;
 
-            // Process through all 3 retinas with different convolutions
+            // Clear all spike buffers before processing new image
+            for (const auto& neuron : allNeurons) {
+                neuron->clearSpikes();
+            }
+
+            // Process through all 3 retinas to get activations
             auto activation1 = retina1->processImage(img);
             auto activation2 = retina2->processImage(img);
             auto activation3 = retina3->processImage(img);
 
-            // Concatenate activations from all 3 clusters
-            std::vector<double> combinedActivation;
-            combinedActivation.reserve(activation1.size() + activation2.size() + activation3.size());
-            combinedActivation.insert(combinedActivation.end(), activation1.begin(), activation1.end());
-            combinedActivation.insert(combinedActivation.end(), activation2.begin(), activation2.end());
-            combinedActivation.insert(combinedActivation.end(), activation3.begin(), activation3.end());
+            // Fire input neurons based on retina activations
+            double currentTime = spikeProcessor->getCurrentTime();
+            fireInputNeurons(retina1->getNeurons(), activation1, networkPropagator, currentTime);
+            fireInputNeurons(retina2->getNeurons(), activation2, networkPropagator, currentTime);
+            fireInputNeurons(retina3->getNeurons(), activation3, networkPropagator, currentTime);
 
-            // Learn patterns in all neurons
+            // Wait for spikes to propagate through the network (50ms propagation time)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+            // Process firing in intermediate layers
+            processLayerFiring(interneurons1, networkPropagator, currentTime + 10.0);
+            processLayerFiring(interneurons2, networkPropagator, currentTime + 10.0);
+            processLayerFiring(interneurons3, networkPropagator, currentTime + 10.0);
+            processLayerFiring(v1HiddenNeurons, networkPropagator, currentTime + 20.0);
+
+            // Wait for final propagation
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+            // Fire the correct output neuron for supervised learning
+            // This creates the teaching signal for STDP
+            outputNeurons[label]->fireAndAcknowledge(currentTime + 50.0);
+            networkPropagator->fireNeuron(outputNeurons[label]->getId(), currentTime + 50.0);
+
+            // Learn patterns in all neurons that received spikes
             for (const auto& neuron : retina1->getNeurons()) {
-                neuron->learnCurrentPattern();
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
             }
             for (const auto& neuron : retina2->getNeurons()) {
-                neuron->learnCurrentPattern();
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
             }
             for (const auto& neuron : retina3->getNeurons()) {
-                neuron->learnCurrentPattern();
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
+            }
+            for (const auto& neuron : interneurons1) {
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
+            }
+            for (const auto& neuron : interneurons2) {
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
+            }
+            for (const auto& neuron : interneurons3) {
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
+            }
+            for (const auto& neuron : v1HiddenNeurons) {
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
+            }
+            for (const auto& neuron : outputNeurons) {
+                if (neuron->getSpikes().size() > 0) {
+                    neuron->learnCurrentPattern();
+                }
             }
 
-            trainingPatterns.emplace_back(combinedActivation, label);
-
-            if ((idx + 1) % 5000 == 0) {
+            if ((idx + 1) % 1000 == 0) {
                 std::cout << "  Processed " << (idx + 1) << " images..." << std::endl;
             }
         }
@@ -719,30 +767,17 @@ int main(int argc, char* argv[]) {
         }
 
         // Testing
-        std::cout << "\n=== Testing Phase ===" << std::endl;
-        #ifdef _OPENMP
-        std::cout << "OpenMP: Using " << omp_get_max_threads() << " threads for k-NN classification" << std::endl;
-        #else
-        std::cout << "OpenMP: Not enabled (single-threaded)" << std::endl;
-        #endif
+        std::cout << "\n=== Testing Phase (Spike-Based Classification) ===" << std::endl;
+        std::cout << "  Using output layer activations for classification" << std::endl;
         auto testStart = std::chrono::steady_clock::now();
 
-        ClassificationStrategy::Config classifierConfig;
-        classifierConfig.k = config.kNeighbors;
-        classifierConfig.numClasses = 10;
-        classifierConfig.distanceExponent = 2.0;
-
-        MajorityVoting classifier(classifierConfig);
         int correct = 0;
         std::vector<int> perDigitCorrect(10, 0);
         std::vector<int> perDigitTotal(10, 0);
 
         size_t numTestImages = std::min((size_t)config.testImages, testLoader.size());
 
-        // Mutexes to protect retina processing (not thread-safe)
-        std::mutex retina1Mutex, retina2Mutex, retina3Mutex;
-
-        #pragma omp parallel for schedule(dynamic, 10) reduction(+:correct)
+        // Testing is sequential for now (spike propagation is not thread-safe yet)
         for (size_t i = 0; i < numTestImages; ++i) {
             int trueLabel = testLoader.getImage(i).label;
 
@@ -752,43 +787,55 @@ int main(int argc, char* argv[]) {
             img.rows = testLoader.getImage(i).rows;
             img.cols = testLoader.getImage(i).cols;
 
-            // Process through all 3 retinas with different convolutions (protected by mutexes)
-            std::vector<double> activation1, activation2, activation3;
-            {
-                std::lock_guard<std::mutex> lock(retina1Mutex);
-                activation1 = retina1->processImage(img);
-            }
-            {
-                std::lock_guard<std::mutex> lock(retina2Mutex);
-                activation2 = retina2->processImage(img);
-            }
-            {
-                std::lock_guard<std::mutex> lock(retina3Mutex);
-                activation3 = retina3->processImage(img);
+            // Clear all spike buffers before processing new image
+            for (const auto& neuron : allNeurons) {
+                neuron->clearSpikes();
             }
 
-            // Concatenate activations from all 3 clusters
-            std::vector<double> combinedActivation;
-            combinedActivation.reserve(activation1.size() + activation2.size() + activation3.size());
-            combinedActivation.insert(combinedActivation.end(), activation1.begin(), activation1.end());
-            combinedActivation.insert(combinedActivation.end(), activation2.begin(), activation2.end());
-            combinedActivation.insert(combinedActivation.end(), activation3.begin(), activation3.end());
+            // Process through all 3 retinas to get activations
+            auto activation1 = retina1->processImage(img);
+            auto activation2 = retina2->processImage(img);
+            auto activation3 = retina3->processImage(img);
 
-            int predicted = classifier.classify(combinedActivation, trainingPatterns, cosineSimilarity);
+            // Fire input neurons based on retina activations
+            double currentTime = spikeProcessor->getCurrentTime();
+            fireInputNeurons(retina1->getNeurons(), activation1, networkPropagator, currentTime);
+            fireInputNeurons(retina2->getNeurons(), activation2, networkPropagator, currentTime);
+            fireInputNeurons(retina3->getNeurons(), activation3, networkPropagator, currentTime);
+
+            // Wait for spikes to propagate through the network
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+            // Process firing in intermediate layers
+            processLayerFiring(interneurons1, networkPropagator, currentTime + 10.0);
+            processLayerFiring(interneurons2, networkPropagator, currentTime + 10.0);
+            processLayerFiring(interneurons3, networkPropagator, currentTime + 10.0);
+            processLayerFiring(v1HiddenNeurons, networkPropagator, currentTime + 20.0);
+
+            // Wait for final propagation to output layer
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+            // Get activations from output neurons
+            auto outputActivations = getLayerActivations(outputNeurons);
+
+            // Classify based on which output neuron has highest activation
+            int predicted = 0;
+            double maxActivation = outputActivations[0];
+            for (int d = 1; d < 10; ++d) {
+                if (outputActivations[d] > maxActivation) {
+                    maxActivation = outputActivations[d];
+                    predicted = d;
+                }
+            }
 
             if (predicted == trueLabel) {
                 correct++;
-                #pragma omp atomic
                 perDigitCorrect[trueLabel]++;
             }
-            #pragma omp atomic
             perDigitTotal[trueLabel]++;
 
-            #pragma omp critical
-            {
-                if ((i + 1) % 1000 == 0) {
-                    std::cout << "  Tested " << (i + 1) << " images..." << std::endl;
-                }
+            if ((i + 1) % 100 == 0) {
+                std::cout << "  Tested " << (i + 1) << " images..." << std::endl;
             }
         }
 
