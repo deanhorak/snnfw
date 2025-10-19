@@ -153,6 +153,10 @@ set(LIB_SOURCES
     src/features/GaborOperator.cpp
     src/features/DoGOperator.cpp
     src/features/EdgeOperatorFactory.cpp
+    src/classification/MajorityVoting.cpp
+    src/classification/WeightedDistance.cpp
+    src/classification/WeightedSimilarity.cpp
+    src/classification/ClassificationStrategyFactory.cpp
 )
 
 # Create the library
@@ -268,6 +272,14 @@ target_link_libraries(debug_gabor ${PROJECT_NAME})
 
 add_executable(mnist_hyperparameter_optimization experiments/mnist_hyperparameter_optimization.cpp)
 target_link_libraries(mnist_hyperparameter_optimization ${PROJECT_NAME})
+
+add_executable(mnist_classification_strategies experiments/mnist_classification_strategies.cpp)
+find_package(CURL REQUIRED)
+target_link_libraries(mnist_classification_strategies ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl)
+target_include_directories(mnist_classification_strategies PRIVATE
+    ${highfive_SOURCE_DIR}/include
+    ${libsonata_SOURCE_DIR}/include
+)
 
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)

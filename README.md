@@ -378,7 +378,7 @@ EventObject (base class with scheduled time)
 - **[docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md](docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md)** - Implementation summary
 
 ### Experiments
-- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (94.63% accuracy with 8×8 grid)
+- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (94.76% accuracy with 8×8 grid)
 
 ## 🎯 Examples
 
@@ -428,7 +428,7 @@ auto activations = retina->getActivationPattern();
 
 ### Available Adapters
 
-- **RetinaAdapter** - Visual processing with edge detection (94.63% MNIST accuracy)
+- **RetinaAdapter** - Visual processing with edge detection (94.76% MNIST accuracy)
 - **AudioAdapter** - Audio processing with FFT and mel-scale channels
 - **DisplayAdapter** - Neural activity visualization (raster, heatmap, vector, ASCII)
 - **Custom Adapters** - Easy to create domain-specific adapters
@@ -438,9 +438,9 @@ auto activations = retina->getActivationPattern();
 ```bash
 cd build
 
-# MNIST with RetinaAdapter (94.63% accuracy with 8×8 grid)
-make mnist_with_adapters -j4
-./mnist_with_adapters ../configs/mnist_sobel_rate_8x8.json
+# MNIST with RetinaAdapter (94.76% accuracy with 8×8 grid)
+make mnist_classification_strategies -j4
+./mnist_classification_strategies ../configs/mnist_8x8_majority.json
 
 # Display visualization
 make display_visualization -j4
@@ -457,11 +457,12 @@ See **[docs/ADAPTER_SYSTEM.md](docs/ADAPTER_SYSTEM.md)** for complete documentat
 
 The `experiments/` directory contains MNIST digit recognition experiments demonstrating spike-based pattern matching:
 
-**Current Best Result: 94.63% accuracy** using:
+**Current Best Result: 94.76% accuracy** using:
 - RetinaAdapter with Sobel edge detection (8 orientations)
 - Spike-based pattern learning
 - k-Nearest Neighbors classification (k=5)
 - **8×8 spatial grid (512 neurons)** - Optimized for higher spatial resolution
+- **Pluggable classification strategies** (MajorityVoting, WeightedDistance, WeightedSimilarity)
 - Configurable via JSON
 
 **Previous Results:**
@@ -489,7 +490,10 @@ LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH SPDLOG_LEVEL=error ./
 ### Available Configurations
 
 **Optimized Configurations (with Adapter System):**
-- **`mnist_sobel_rate_8x8.json`** - **Best: 94.63% accuracy** (8×8 grid, 512 neurons)
+- **`mnist_8x8_majority.json`** - **Best: 94.76% accuracy** (8×8 grid, 512 neurons, Majority Voting)
+- **`mnist_8x8_weighted_distance.json`** - 94.76% accuracy (8×8 grid, Distance-Weighted k-NN)
+- **`mnist_8x8_weighted_similarity.json`** - 94.76% accuracy (8×8 grid, Similarity-Weighted k-NN)
+- **`mnist_sobel_rate_8x8.json`** - 94.63% accuracy (8×8 grid, 512 neurons)
 - **`mnist_sobel_rate_9x9.json`** - 94.61% accuracy (9×9 grid, 648 neurons)
 - **`mnist_sobel_rate.json`** - 92.71% accuracy (7×7 grid, 392 neurons)
 - **`mnist_sobel_rate_5x5.json`** - 89.90% accuracy (5×5 grid, 200 neurons)

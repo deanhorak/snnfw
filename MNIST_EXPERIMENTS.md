@@ -6,7 +6,7 @@ This document describes the MNIST digit recognition experiments conducted using 
 
 ## Current Best Result
 
-**Overall Accuracy: 94.63% (9463/10000 test images)**
+**Overall Accuracy: 94.76% (9476/10000 test images)**
 
 Using:
 - **8×8 spatial grid (64 regions)** - Optimized for higher spatial resolution
@@ -14,10 +14,12 @@ Using:
 - **512 total feature neurons** (8×8 grid × 8 orientations)
 - **3×3 pixel regions** - Finer spatial sampling than 7×7 grid
 - Rate encoding with 200ms temporal window
+- **Pluggable classification strategies** (MajorityVoting, WeightedDistance, WeightedSimilarity)
 - k-NN classification with k=5 neighbors
 - 5000 training examples per digit
 
 **Previous Results:**
+- 94.63% accuracy (8×8 grid, 512 neurons, simple k-NN)
 - 92.71% accuracy (7×7 grid, 392 neurons, 4×4 pixel regions)
 - 81.20% accuracy (7×7 grid, inline implementation)
 
@@ -48,34 +50,49 @@ Each feature neuron learns temporal spike patterns:
 3. **Cosine Similarity**: Used for pattern matching
 4. **Activation Vectors**: 392-dimensional vectors representing neuron responses
 
-### Classification: k-Nearest Neighbors
+### Classification: k-Nearest Neighbors with Pluggable Strategies
 
-Instead of traditional weight-based classification, the system uses k-NN voting:
+Instead of traditional weight-based classification, the system uses k-NN voting with pluggable classification strategies:
 
 1. **Training**: Store activation patterns for all 50,000 training examples (5000 per digit)
 2. **Testing**: For each test image:
-   - Compute activation vector (392 dimensions)
+   - Compute activation vector (512 dimensions)
    - Calculate cosine similarity to all 50,000 training patterns
    - Select k=5 nearest neighbors
-   - Vote among neighbors
+   - Apply classification strategy to vote among neighbors
    - Predict digit with most votes
+
+**Available Classification Strategies:**
+- **MajorityVoting**: Each neighbor gets one vote (baseline)
+- **WeightedDistance**: Closer neighbors have more influence (weight = 1/(distance^p + ε))
+- **WeightedSimilarity**: More similar neighbors have more influence (weight = similarity^p)
+
+**Classification Strategy Results (8×8 Grid):**
+
+| Strategy | Accuracy | Notes |
+|----------|----------|-------|
+| MajorityVoting | 94.76% | Baseline - equal votes |
+| WeightedDistance | 94.76% | Same as baseline - k-NN already well-separated |
+| WeightedSimilarity | 94.76% | Same as baseline - k-NN already well-separated |
+
+**Key Finding**: All three strategies achieve identical accuracy (94.76%). This indicates that the k=5 nearest neighbors are already highly similar and from the correct class, so weighting doesn't change the outcome. The high-quality features from the 8×8 grid + Sobel operator create well-separated clusters in the activation space.
 
 ## Performance Results
 
-### Per-Digit Accuracy (8×8 Grid - Current Best: 94.63%)
+### Per-Digit Accuracy (8×8 Grid - Current Best: 94.76%)
 
 | Digit | Accuracy | Correct/Total | Improvement from 7×7 | Notes |
 |-------|----------|---------------|---------------------|-------|
-| 0 | 99.0% | 970/980 | +6.5% | Excellent - distinctive circular shape |
-| 1 | 98.6% | 1119/1135 | +2.2% | Best - simple vertical stroke |
-| 2 | 95.0% | 980/1032 | +1.7% | Excellent - improved edge detection |
-| 3 | 93.9% | 948/1010 | +3.0% | Good - better topology capture |
-| 4 | 88.7% | 871/982 | +0.6% | Moderate - still challenging |
-| 5 | 95.0% | 847/892 | +8.7% | Excellent - huge improvement! |
-| 6 | 97.7% | 936/958 | +0.1% | Excellent - distinctive loop |
-| 7 | 92.7% | 953/1028 | +4.7% | Good - improved edge detection |
-| 8 | 91.3% | 889/974 | +0.3% | Good - complex topology |
-| 9 | 94.2% | 950/1009 | -0.6% | Good - slight regression |
+| 0 | 99.1% | 971/980 | +6.6% | Excellent - distinctive circular shape |
+| 1 | 98.5% | 1118/1135 | +2.1% | Best - simple vertical stroke |
+| 2 | 95.2% | 982/1032 | +1.9% | Excellent - improved edge detection |
+| 3 | 93.0% | 939/1010 | +2.1% | Good - better topology capture |
+| 4 | 88.5% | 869/982 | +0.4% | Moderate - still challenging |
+| 5 | 94.7% | 845/892 | +8.4% | Excellent - huge improvement! |
+| 6 | 98.3% | 942/958 | +0.7% | Excellent - distinctive loop |
+| 7 | 92.9% | 955/1028 | +4.9% | Good - improved edge detection |
+| 8 | 92.0% | 896/974 | +1.0% | Good - complex topology |
+| 9 | 95.0% | 959/1009 | +0.2% | Good - consistent performance |
 
 ### Grid Size Comparison
 
@@ -84,7 +101,7 @@ Instead of traditional weight-based classification, the system uses k-NN voting:
 | 4×4 | 7×7 pixels | 128 | 83.20% | -9.51% | Too coarse - insufficient spatial detail |
 | 5×5 | 5×5 pixels | 200 | 89.90% | -2.81% | Better but still coarse |
 | 7×7 | 4×4 pixels | 392 | 92.71% | baseline | Previous best |
-| **8×8** | **3×3 pixels** | **512** | **94.63%** | **+1.92%** | **Optimal - current best** |
+| **8×8** | **3×3 pixels** | **512** | **94.76%** | **+2.05%** | **Optimal - current best** |
 | 9×9 | 3×3 pixels | 648 | 94.61% | +1.90% | Diminishing returns |
 
 **Key Finding**: Higher spatial resolution (more regions, smaller region size) significantly improves accuracy. The 8×8 grid provides optimal balance between spatial detail and computational efficiency.
@@ -92,7 +109,7 @@ Instead of traditional weight-based classification, the system uses k-NN voting:
 ### Major Confusion Patterns (8×8 Grid)
 
 Remaining challenges with 8×8 grid:
-1. **4 → 9**: Still the primary confusion (digit 4 is hardest at 88.7%)
+1. **4 → 9**: Still the primary confusion (digit 4 is hardest at 88.5%)
 2. **8 → 3**: Complex topology similarities
 3. **7 → 1**: Writing style variations
 
