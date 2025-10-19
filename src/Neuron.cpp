@@ -1,5 +1,6 @@
 #include "snnfw/Neuron.h"
 #include "snnfw/Logger.h"
+#include "snnfw/learning/PatternUpdateStrategy.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <cmath>
@@ -34,6 +35,23 @@ void Neuron::learnCurrentPattern() {
         return;
     }
 
+    // If a pattern update strategy is set, use it
+    if (patternStrategy_) {
+        learning::PatternUpdateStrategy::Config config;
+        config.maxPatterns = maxPatterns;
+        config.similarityThreshold = threshold;
+
+        // Create similarity metric lambda
+        auto similarityMetric = [](const std::vector<double>& a, const std::vector<double>& b) {
+            return Neuron::cosineSimilarity(a, b);
+        };
+
+        patternStrategy_->updatePatterns(referencePatterns, spikes, similarityMetric);
+        SNNFW_DEBUG("Neuron {}: Updated patterns using {} strategy", getId(), patternStrategy_->getName());
+        return;
+    }
+
+    // Default behavior (backward compatibility)
     if (referencePatterns.size() < maxPatterns) {
         referencePatterns.push_back(spikes);
         SNNFW_DEBUG("Neuron {}: Learned new pattern (size={})", getId(), spikes.size());
@@ -49,6 +67,11 @@ void Neuron::learnCurrentPattern() {
             SNNFW_DEBUG("Neuron {}: Replaced pattern #{} with new pattern", getId(), randIndex);
         }
     }
+}
+
+void Neuron::setPatternUpdateStrategy(std::shared_ptr<learning::PatternUpdateStrategy> strategy) {
+    patternStrategy_ = strategy;
+    SNNFW_INFO("Neuron {}: Set pattern update strategy to {}", getId(), strategy ? strategy->getName() : "default");
 }
 
 void Neuron::printSpikes() const {

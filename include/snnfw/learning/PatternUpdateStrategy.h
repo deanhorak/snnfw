@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include <map>
+#include <functional>
 
 namespace snnfw {
 namespace learning {

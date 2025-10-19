@@ -157,6 +157,10 @@ set(LIB_SOURCES
     src/classification/WeightedDistance.cpp
     src/classification/WeightedSimilarity.cpp
     src/classification/ClassificationStrategyFactory.cpp
+    src/learning/AppendStrategy.cpp
+    src/learning/ReplaceWorstStrategy.cpp
+    src/learning/MergeSimilarStrategy.cpp
+    src/learning/PatternUpdateStrategyFactory.cpp
 )
 
 # Create the library
@@ -277,6 +281,13 @@ add_executable(mnist_classification_strategies experiments/mnist_classification_
 find_package(CURL REQUIRED)
 target_link_libraries(mnist_classification_strategies ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl)
 target_include_directories(mnist_classification_strategies PRIVATE
+    ${highfive_SOURCE_DIR}/include
+    ${libsonata_SOURCE_DIR}/include
+)
+
+add_executable(mnist_learning_strategies experiments/mnist_learning_strategies.cpp)
+target_link_libraries(mnist_learning_strategies ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl)
+target_include_directories(mnist_learning_strategies PRIVATE
     ${highfive_SOURCE_DIR}/include
     ${libsonata_SOURCE_DIR}/include
 )

@@ -4,8 +4,14 @@
 #include "snnfw/NeuralObject.h"
 #include <vector>
 #include <cstddef>
+#include <memory>
 
 namespace snnfw {
+
+// Forward declaration
+namespace learning {
+    class PatternUpdateStrategy;
+}
 
 /**
  * @brief Neuron class for spiking neural network with temporal pattern learning
@@ -60,6 +66,12 @@ public:
      * @brief Learn the current spike pattern (either add or blend)
      */
     void learnCurrentPattern();
+
+    /**
+     * @brief Set the pattern update strategy for learning
+     * @param strategy Shared pointer to the pattern update strategy
+     */
+    void setPatternUpdateStrategy(std::shared_ptr<learning::PatternUpdateStrategy> strategy);
 
     /**
      * @brief Print current rolling window of spikes
@@ -163,6 +175,8 @@ private:
 
     uint64_t axonId;                                     ///< ID of the axon for this neuron (0 if not set)
     std::vector<uint64_t> dendriteIds;                   ///< IDs of dendrites connected to this neuron
+
+    std::shared_ptr<learning::PatternUpdateStrategy> patternStrategy_;  ///< Strategy for updating patterns (optional)
 
     /**
      * @brief Remove spikes outside the rolling window
