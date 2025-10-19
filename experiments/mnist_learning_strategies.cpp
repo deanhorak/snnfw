@@ -37,6 +37,7 @@
 #include "snnfw/learning/AppendStrategy.h"
 #include "snnfw/learning/ReplaceWorstStrategy.h"
 #include "snnfw/learning/MergeSimilarStrategy.h"
+#include "snnfw/learning/HybridStrategy.h"
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -177,6 +178,13 @@ int main(int argc, char* argv[]) {
             strategy = std::make_shared<ReplaceWorstStrategy>(strategyConfig);
         } else if (strategyName == "merge_similar" || strategyName == "mergesimilar") {
             strategy = std::make_shared<MergeSimilarStrategy>(strategyConfig);
+        } else if (strategyName == "hybrid") {
+            // Add hybrid-specific parameters to config
+            strategyConfig.doubleParams["merge_threshold"] = config.get<double>("/learning/merge_threshold", 0.85);
+            strategyConfig.doubleParams["merge_weight"] = config.get<double>("/learning/merge_weight", 0.3);
+            strategyConfig.doubleParams["blend_alpha"] = config.get<double>("/learning/blend_alpha", 0.2);
+            strategyConfig.intParams["prune_threshold"] = config.get<int>("/learning/prune_threshold", 2);
+            strategy = std::make_shared<HybridStrategy>(strategyConfig);
         } else {
             std::cerr << "Unknown learning strategy: " << mnistConfig.learningStrategy << std::endl;
             return 1;

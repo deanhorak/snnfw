@@ -160,6 +160,7 @@ set(LIB_SOURCES
     src/learning/AppendStrategy.cpp
     src/learning/ReplaceWorstStrategy.cpp
     src/learning/MergeSimilarStrategy.cpp
+    src/learning/HybridStrategy.cpp
     src/learning/PatternUpdateStrategyFactory.cpp
 )
 

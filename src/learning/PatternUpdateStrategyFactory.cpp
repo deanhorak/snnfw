@@ -2,6 +2,7 @@
 #include "snnfw/learning/AppendStrategy.h"
 #include "snnfw/learning/ReplaceWorstStrategy.h"
 #include "snnfw/learning/MergeSimilarStrategy.h"
+#include "snnfw/learning/HybridStrategy.h"
 #include "snnfw/Logger.h"
 #include <algorithm>
 #include <stdexcept>
@@ -29,6 +30,10 @@ std::unique_ptr<PatternUpdateStrategy> PatternUpdateStrategyFactory::create(
         SNNFW_INFO("Creating MergeSimilarStrategy (synaptic consolidation)");
         return std::make_unique<MergeSimilarStrategy>(config);
     }
+    else if (lowerType == "hybrid") {
+        SNNFW_INFO("Creating HybridStrategy (pruning + consolidation)");
+        return std::make_unique<HybridStrategy>(config);
+    }
     else {
         SNNFW_ERROR("Unknown pattern update strategy: {}", type);
         throw std::invalid_argument("Unknown pattern update strategy: " + type);
@@ -39,7 +44,8 @@ std::vector<std::string> PatternUpdateStrategyFactory::getAvailableStrategies() 
     return {
         "append",          // Baseline: simple append with blending
         "replace_worst",   // Synaptic pruning: replace least-used patterns
-        "merge_similar"    // Synaptic consolidation: merge similar patterns
+        "merge_similar",   // Synaptic consolidation: merge similar patterns
+        "hybrid"           // Hybrid: pruning + consolidation
     };
 }
 
