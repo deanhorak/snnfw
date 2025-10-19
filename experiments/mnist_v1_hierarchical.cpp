@@ -38,6 +38,8 @@
 #include "snnfw/adapters/RetinaAdapter.h"
 #include "snnfw/classification/MajorityVoting.h"
 #include "snnfw/learning/HybridStrategy.h"
+#include "snnfw/SpikeProcessor.h"
+#include "snnfw/NetworkPropagator.h"
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -45,6 +47,7 @@
 #include <chrono>
 #include <mutex>
 #include <random>
+#include <thread>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -87,6 +90,55 @@ double cosineSimilarity(const std::vector<double>& a, const std::vector<double>&
     }
     if (normA == 0.0 || normB == 0.0) return 0.0;
     return dot / (std::sqrt(normA) * std::sqrt(normB));
+}
+
+// Helper: Fire input neurons based on retina activations
+void fireInputNeurons(
+    const std::vector<std::shared_ptr<Neuron>>& neurons,
+    const std::vector<double>& activations,
+    std::shared_ptr<NetworkPropagator> propagator,
+    double currentTime) {
+
+    for (size_t i = 0; i < neurons.size() && i < activations.size(); ++i) {
+        if (activations[i] > 0.1) {  // Threshold for firing
+            // Fire neuron with timing based on activation strength
+            // Higher activation = earlier spike
+            double firingTime = currentTime + (1.0 - activations[i]) * 10.0;  // 0-10ms delay
+            propagator->fireNeuron(neurons[i]->getId(), firingTime);
+        }
+    }
+}
+
+// Helper: Check if any neurons in a layer have fired and trigger acknowledgments
+void processLayerFiring(
+    const std::vector<std::shared_ptr<Neuron>>& neurons,
+    std::shared_ptr<NetworkPropagator> propagator,
+    double currentTime) {
+
+    for (const auto& neuron : neurons) {
+        // Check if neuron should fire based on pattern matching
+        if (neuron->checkShouldFire()) {
+            // Fire the neuron and send STDP acknowledgments
+            neuron->fireAndAcknowledge(currentTime);
+            propagator->fireNeuron(neuron->getId(), currentTime);
+        }
+    }
+}
+
+// Helper: Get activation vector from a layer of neurons
+std::vector<double> getLayerActivations(
+    const std::vector<std::shared_ptr<Neuron>>& neurons) {
+
+    std::vector<double> activations;
+    activations.reserve(neurons.size());
+
+    for (const auto& neuron : neurons) {
+        // Get best similarity to learned patterns
+        double activation = neuron->getBestSimilarity();
+        activations.push_back(activation >= 0 ? activation : 0.0);
+    }
+
+    return activations;
 }
 
 int main(int argc, char* argv[]) {
@@ -236,8 +288,13 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "\n=== Creating Sparse Horizontal Connections ===" << std::endl;
 
+        // Storage for all created axons, synapses, and dendrites
+        std::vector<std::shared_ptr<Axon>> allAxons;
+        std::vector<std::shared_ptr<Synapse>> allSynapses;
+        std::vector<std::shared_ptr<Dendrite>> allDendrites;
+
         // Helper lambda to create sparse bidirectional connections
-        auto createSparseConnections = [&factory](
+        auto createSparseConnections = [&factory, &allAxons, &allSynapses, &allDendrites](
             const std::vector<std::shared_ptr<Neuron>>& sourceNeurons,
             const std::vector<std::shared_ptr<Neuron>>& interneurons,
             const std::vector<std::shared_ptr<Neuron>>& targetNeurons,
@@ -254,6 +311,7 @@ int main(int argc, char* argv[]) {
                 if (sourceNeuron->getAxonId() == 0) {
                     auto axon = factory.createAxon(sourceNeuron->getId());
                     sourceNeuron->setAxonId(axon->getId());
+                    allAxons.push_back(axon);
                 }
 
                 for (const auto& interneuron : interneurons) {
@@ -261,6 +319,7 @@ int main(int argc, char* argv[]) {
                         // Create dendrite for interneuron
                         auto dendrite = factory.createDendrite(interneuron->getId());
                         interneuron->addDendrite(dendrite->getId());
+                        allDendrites.push_back(dendrite);
 
                         // Create synapse connecting them
                         auto synapse = factory.createSynapse(
@@ -269,6 +328,7 @@ int main(int argc, char* argv[]) {
                             1.0,  // weight
                             1.0   // delay (ms)
                         );
+                        allSynapses.push_back(synapse);
 
                         connectionCount++;
                     }
@@ -281,6 +341,7 @@ int main(int argc, char* argv[]) {
                 if (interneuron->getAxonId() == 0) {
                     auto axon = factory.createAxon(interneuron->getId());
                     interneuron->setAxonId(axon->getId());
+                    allAxons.push_back(axon);
                 }
 
                 for (const auto& targetNeuron : targetNeurons) {
@@ -288,6 +349,7 @@ int main(int argc, char* argv[]) {
                         // Create dendrite for target neuron
                         auto dendrite = factory.createDendrite(targetNeuron->getId());
                         targetNeuron->addDendrite(dendrite->getId());
+                        allDendrites.push_back(dendrite);
 
                         // Create synapse connecting them
                         auto synapse = factory.createSynapse(
@@ -296,6 +358,7 @@ int main(int argc, char* argv[]) {
                             1.0,  // weight
                             1.0   // delay (ms)
                         );
+                        allSynapses.push_back(synapse);
 
                         connectionCount++;
                     }
@@ -366,6 +429,7 @@ int main(int argc, char* argv[]) {
             if (sourceNeuron->getAxonId() == 0) {
                 auto axon = factory.createAxon(sourceNeuron->getId());
                 sourceNeuron->setAxonId(axon->getId());
+                allAxons.push_back(axon);
             }
 
             for (const auto& v1Neuron : v1HiddenNeurons) {
@@ -373,6 +437,7 @@ int main(int argc, char* argv[]) {
                     // Create dendrite for V1 neuron
                     auto dendrite = factory.createDendrite(v1Neuron->getId());
                     v1Neuron->addDendrite(dendrite->getId());
+                    allDendrites.push_back(dendrite);
 
                     // Create synapse
                     auto synapse = factory.createSynapse(
@@ -381,6 +446,7 @@ int main(int argc, char* argv[]) {
                         1.0,  // weight
                         1.0   // delay (ms)
                     );
+                    allSynapses.push_back(synapse);
 
                     v1Connections++;
                 }
@@ -425,6 +491,7 @@ int main(int argc, char* argv[]) {
             if (v1Neuron->getAxonId() == 0) {
                 auto axon = factory.createAxon(v1Neuron->getId());
                 v1Neuron->setAxonId(axon->getId());
+                allAxons.push_back(axon);
             }
 
             for (const auto& outputNeuron : outputNeurons) {
@@ -432,6 +499,7 @@ int main(int argc, char* argv[]) {
                     // Create dendrite for output neuron
                     auto dendrite = factory.createDendrite(outputNeuron->getId());
                     outputNeuron->addDendrite(dendrite->getId());
+                    allDendrites.push_back(dendrite);
 
                     // Create synapse
                     auto synapse = factory.createSynapse(
@@ -440,6 +508,7 @@ int main(int argc, char* argv[]) {
                         1.0,  // weight
                         1.0   // delay (ms)
                     );
+                    allSynapses.push_back(synapse);
 
                     outputConnections++;
                 }
@@ -456,6 +525,73 @@ int main(int argc, char* argv[]) {
         std::cout << "  Output Layer:        10 neurons" << std::endl;
         std::cout << "  Total Neurons:     2442 neurons" << std::endl;
         std::cout << "  Total Synapses:    " << (conn1 + conn2 + conn3 + v1Connections + outputConnections) << " synapses" << std::endl;
+
+        // ========================================================================
+        // Create SpikeProcessor and NetworkPropagator for spike-based propagation
+        // ========================================================================
+        std::cout << "\n=== Initializing Spike-Based Propagation System ===" << std::endl;
+
+        // Create SpikeProcessor with 20 threads for parallel spike delivery
+        int numThreads = configLoader.get<int>("/spike_processor/num_threads", 20);
+        auto spikeProcessor = std::make_shared<SpikeProcessor>(numThreads);
+        std::cout << "✓ Created SpikeProcessor with " << numThreads << " delivery threads" << std::endl;
+
+        // Create NetworkPropagator
+        auto networkPropagator = std::make_shared<NetworkPropagator>(spikeProcessor);
+
+        // Set STDP parameters
+        double stdpAPlus = configLoader.get<double>("/stdp/a_plus", 0.01);
+        double stdpAMinus = configLoader.get<double>("/stdp/a_minus", 0.012);
+        double stdpTauPlus = configLoader.get<double>("/stdp/tau_plus", 20.0);
+        double stdpTauMinus = configLoader.get<double>("/stdp/tau_minus", 20.0);
+        networkPropagator->setSTDPParameters(stdpAPlus, stdpAMinus, stdpTauPlus, stdpTauMinus);
+        std::cout << "✓ Created NetworkPropagator with STDP (A+=" << stdpAPlus
+                  << ", A-=" << stdpAMinus << ", τ+=" << stdpTauPlus << ", τ-=" << stdpTauMinus << ")" << std::endl;
+
+        // Register all neurons with NetworkPropagator
+        std::cout << "\n=== Registering Neural Objects ===" << std::endl;
+
+        // Collect all neurons
+        std::vector<std::shared_ptr<Neuron>> allNeurons;
+        allNeurons.insert(allNeurons.end(), retina1->getNeurons().begin(), retina1->getNeurons().end());
+        allNeurons.insert(allNeurons.end(), retina2->getNeurons().begin(), retina2->getNeurons().end());
+        allNeurons.insert(allNeurons.end(), retina3->getNeurons().begin(), retina3->getNeurons().end());
+        allNeurons.insert(allNeurons.end(), interneurons1.begin(), interneurons1.end());
+        allNeurons.insert(allNeurons.end(), interneurons2.begin(), interneurons2.end());
+        allNeurons.insert(allNeurons.end(), interneurons3.begin(), interneurons3.end());
+        allNeurons.insert(allNeurons.end(), v1HiddenNeurons.begin(), v1HiddenNeurons.end());
+        allNeurons.insert(allNeurons.end(), outputNeurons.begin(), outputNeurons.end());
+
+        // Register neurons and set NetworkPropagator reference
+        for (const auto& neuron : allNeurons) {
+            networkPropagator->registerNeuron(neuron);
+            neuron->setNetworkPropagator(networkPropagator);
+        }
+        std::cout << "✓ Registered " << allNeurons.size() << " neurons" << std::endl;
+
+        // Register all axons
+        for (const auto& axon : allAxons) {
+            networkPropagator->registerAxon(axon);
+        }
+        std::cout << "✓ Registered " << allAxons.size() << " axons" << std::endl;
+
+        // Register all synapses
+        for (const auto& synapse : allSynapses) {
+            networkPropagator->registerSynapse(synapse);
+        }
+        std::cout << "✓ Registered " << allSynapses.size() << " synapses" << std::endl;
+
+        // Register all dendrites
+        for (const auto& dendrite : allDendrites) {
+            networkPropagator->registerDendrite(dendrite);
+            dendrite->setNetworkPropagator(networkPropagator);
+            spikeProcessor->registerDendrite(dendrite);
+        }
+        std::cout << "✓ Registered " << allDendrites.size() << " dendrites" << std::endl;
+
+        // Start the SpikeProcessor background thread
+        spikeProcessor->start();
+        std::cout << "✓ Started SpikeProcessor background thread" << std::endl;
 
         // Create learning strategy
         PatternUpdateStrategy::Config strategyConfig;
