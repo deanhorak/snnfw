@@ -109,18 +109,19 @@ void fireInputNeurons(
     }
 }
 
-// Helper: Check if any neurons in a layer have fired and trigger acknowledgments
+// Helper: Check if any neurons in a layer should fire and schedule their spikes
 void processLayerFiring(
     const std::vector<std::shared_ptr<Neuron>>& neurons,
     std::shared_ptr<NetworkPropagator> propagator,
-    double currentTime) {
+    double firingTime) {
 
     for (const auto& neuron : neurons) {
         // Check if neuron should fire based on pattern matching
         if (neuron->checkShouldFire()) {
-            // Fire the neuron and send STDP acknowledgments
-            neuron->fireAndAcknowledge(currentTime);
-            propagator->fireNeuron(neuron->getId(), currentTime);
+            // Schedule the neuron to fire at the specified future time
+            // The SpikeProcessor will deliver the spike at the correct time
+            neuron->fireAndAcknowledge(firingTime);
+            propagator->fireNeuron(neuron->getId(), firingTime);
         }
     }
 }
@@ -531,10 +532,12 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "\n=== Initializing Spike-Based Propagation System ===" << std::endl;
 
-        // Create SpikeProcessor with 20 threads for parallel spike delivery
+        // Create SpikeProcessor with configurable buffer and thread count
+        int bufferSize = configLoader.get<int>("/spike_processor/buffer_size", 10000);
         int numThreads = configLoader.get<int>("/spike_processor/num_threads", 20);
-        auto spikeProcessor = std::make_shared<SpikeProcessor>(numThreads);
-        std::cout << "✓ Created SpikeProcessor with " << numThreads << " delivery threads" << std::endl;
+        auto spikeProcessor = std::make_shared<SpikeProcessor>(bufferSize, numThreads);
+        std::cout << "✓ Created SpikeProcessor: " << bufferSize << " time slices ("
+                  << bufferSize << "ms buffer), " << numThreads << " delivery threads" << std::endl;
 
         // Create NetworkPropagator
         auto networkPropagator = std::make_shared<NetworkPropagator>(spikeProcessor);
@@ -687,28 +690,30 @@ int main(int argc, char* argv[]) {
             auto activation2 = retina2->processImage(img);
             auto activation3 = retina3->processImage(img);
 
-            // Fire input neurons based on retina activations
+            // Schedule all spikes into the future using the circular event queue
+            // The SpikeProcessor will automatically deliver them at the correct times
             double currentTime = spikeProcessor->getCurrentTime();
+
+            // Schedule input neuron spikes (0-10ms from now based on activation)
             fireInputNeurons(retina1->getNeurons(), activation1, networkPropagator, currentTime);
             fireInputNeurons(retina2->getNeurons(), activation2, networkPropagator, currentTime);
             fireInputNeurons(retina3->getNeurons(), activation3, networkPropagator, currentTime);
 
-            // Wait for spikes to propagate through the network (50ms propagation time)
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-            // Process firing in intermediate layers
+            // Schedule intermediate layer processing (10ms after input)
             processLayerFiring(interneurons1, networkPropagator, currentTime + 10.0);
             processLayerFiring(interneurons2, networkPropagator, currentTime + 10.0);
             processLayerFiring(interneurons3, networkPropagator, currentTime + 10.0);
+
+            // Schedule V1 hidden layer processing (20ms after input)
             processLayerFiring(v1HiddenNeurons, networkPropagator, currentTime + 20.0);
 
-            // Wait for final propagation
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-
-            // Fire the correct output neuron for supervised learning
-            // This creates the teaching signal for STDP
+            // Schedule supervised teaching signal (50ms after input)
+            // This fires the correct output neuron for STDP learning
             outputNeurons[label]->fireAndAcknowledge(currentTime + 50.0);
             networkPropagator->fireNeuron(outputNeurons[label]->getId(), currentTime + 50.0);
+
+            // Wait for all scheduled events to complete (60ms total)
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
 
             // Learn patterns in all neurons that received spikes
             for (const auto& neuron : retina1->getNeurons()) {
@@ -797,22 +802,23 @@ int main(int argc, char* argv[]) {
             auto activation2 = retina2->processImage(img);
             auto activation3 = retina3->processImage(img);
 
-            // Fire input neurons based on retina activations
+            // Schedule all spikes into the future using the circular event queue
             double currentTime = spikeProcessor->getCurrentTime();
+
+            // Schedule input neuron spikes (0-10ms from now based on activation)
             fireInputNeurons(retina1->getNeurons(), activation1, networkPropagator, currentTime);
             fireInputNeurons(retina2->getNeurons(), activation2, networkPropagator, currentTime);
             fireInputNeurons(retina3->getNeurons(), activation3, networkPropagator, currentTime);
 
-            // Wait for spikes to propagate through the network
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-            // Process firing in intermediate layers
+            // Schedule intermediate layer processing (10ms after input)
             processLayerFiring(interneurons1, networkPropagator, currentTime + 10.0);
             processLayerFiring(interneurons2, networkPropagator, currentTime + 10.0);
             processLayerFiring(interneurons3, networkPropagator, currentTime + 10.0);
+
+            // Schedule V1 hidden layer processing (20ms after input)
             processLayerFiring(v1HiddenNeurons, networkPropagator, currentTime + 20.0);
 
-            // Wait for final propagation to output layer
+            // Wait for all scheduled events to complete (30ms total for inference)
             std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
             // Get activations from output neurons
