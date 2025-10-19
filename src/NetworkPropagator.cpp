@@ -2,16 +2,22 @@
 #include "snnfw/ActionPotential.h"
 #include "snnfw/Logger.h"
 #include <algorithm>
+#include <cmath>
 
 namespace snnfw {
 
 NetworkPropagator::NetworkPropagator(std::shared_ptr<SpikeProcessor> spikeProcessor)
-    : spikeProcessor_(spikeProcessor) {
+    : spikeProcessor_(spikeProcessor),
+      stdpAPlus_(0.01),
+      stdpAMinus_(0.012),
+      stdpTauPlus_(20.0),
+      stdpTauMinus_(20.0) {
     if (!spikeProcessor_) {
         SNNFW_ERROR("NetworkPropagator: SpikeProcessor cannot be null");
         throw std::invalid_argument("SpikeProcessor cannot be null");
     }
-    SNNFW_INFO("NetworkPropagator: Initialized");
+    SNNFW_INFO("NetworkPropagator: Initialized with STDP parameters (A+={}, A-={}, τ+={}, τ-={})",
+               stdpAPlus_, stdpAMinus_, stdpTauPlus_, stdpTauMinus_);
 }
 
 void NetworkPropagator::registerNeuron(const std::shared_ptr<Neuron>& neuron) {
@@ -143,7 +149,7 @@ int NetworkPropagator::fireNeuron(uint64_t neuronId, double firingTime) {
     return spikesScheduled;
 }
 
-bool NetworkPropagator::deliverSpikeToNeuron(uint64_t neuronId, double spikeTime, double amplitude) {
+bool NetworkPropagator::deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapseId, double spikeTime, double amplitude) {
     std::shared_ptr<Neuron> neuron;
     {
         std::lock_guard<std::mutex> lock(neuronMutex_);
@@ -158,9 +164,12 @@ bool NetworkPropagator::deliverSpikeToNeuron(uint64_t neuronId, double spikeTime
     // Insert spike into neuron's buffer
     // Note: amplitude could be used to modulate the spike, but for now we just insert the spike time
     neuron->insertSpike(spikeTime);
-    
-    SNNFW_TRACE("NetworkPropagator: Delivered spike to neuron {} at time {:.3f}ms (amplitude: {:.3f})",
-               neuronId, spikeTime, amplitude);
+
+    // Record the incoming spike for STDP
+    neuron->recordIncomingSpike(synapseId, spikeTime);
+
+    SNNFW_TRACE("NetworkPropagator: Delivered spike to neuron {} at time {:.3f}ms (amplitude: {:.3f}, synapse: {})",
+               neuronId, spikeTime, amplitude, synapseId);
 
     return true;
 }
@@ -232,6 +241,77 @@ size_t NetworkPropagator::getNeuronCount() const {
 size_t NetworkPropagator::getSynapseCount() const {
     std::lock_guard<std::mutex> lock(synapseMutex_);
     return synapseRegistry_.size();
+}
+
+void NetworkPropagator::sendAcknowledgment(const std::shared_ptr<SpikeAcknowledgment>& acknowledgment) {
+    if (!acknowledgment) {
+        SNNFW_ERROR("NetworkPropagator: Cannot send null acknowledgment");
+        return;
+    }
+
+    // Apply STDP to the synapse
+    double timeDifference = acknowledgment->getTimeDifference();
+    uint64_t synapseId = acknowledgment->getSynapseId();
+
+    if (applySTDP(synapseId, timeDifference)) {
+        SNNFW_TRACE("NetworkPropagator: Applied STDP to synapse {} (Δt = {:.3f}ms)",
+                   synapseId, timeDifference);
+    } else {
+        SNNFW_WARN("NetworkPropagator: Failed to apply STDP to synapse {}", synapseId);
+    }
+}
+
+bool NetworkPropagator::applySTDP(uint64_t synapseId, double timeDifference) {
+    std::shared_ptr<Synapse> synapse;
+    {
+        std::lock_guard<std::mutex> lock(synapseMutex_);
+        auto it = synapseRegistry_.find(synapseId);
+        if (it == synapseRegistry_.end()) {
+            SNNFW_WARN("NetworkPropagator: Synapse {} not found for STDP update", synapseId);
+            return false;
+        }
+        synapse = it->second;
+    }
+
+    // Classic STDP learning rule:
+    // Δw = A+ * exp(-Δt / τ+)  if Δt > 0 (LTP: pre before post)
+    // Δw = -A- * exp(Δt / τ-)  if Δt < 0 (LTD: post before pre)
+
+    double weightChange = 0.0;
+
+    if (timeDifference > 0) {
+        // LTP: strengthen synapse (pre-synaptic spike arrived before post-synaptic spike)
+        weightChange = stdpAPlus_ * std::exp(-timeDifference / stdpTauPlus_);
+    } else if (timeDifference < 0) {
+        // LTD: weaken synapse (post-synaptic spike arrived before pre-synaptic spike)
+        weightChange = -stdpAMinus_ * std::exp(timeDifference / stdpTauMinus_);
+    }
+    // If timeDifference == 0, no change
+
+    if (weightChange != 0.0) {
+        double oldWeight = synapse->getWeight();
+        double newWeight = oldWeight + weightChange;
+
+        // Clamp weight to [0, 2] range to prevent runaway growth/decay
+        newWeight = std::max(0.0, std::min(2.0, newWeight));
+
+        synapse->setWeight(newWeight);
+
+        SNNFW_TRACE("NetworkPropagator: STDP update for synapse {}: Δt={:.3f}ms, Δw={:.6f}, weight: {:.4f} → {:.4f}",
+                   synapseId, timeDifference, weightChange, oldWeight, newWeight);
+    }
+
+    return true;
+}
+
+void NetworkPropagator::setSTDPParameters(double aPlus, double aMinus, double tauPlus, double tauMinus) {
+    stdpAPlus_ = aPlus;
+    stdpAMinus_ = aMinus;
+    stdpTauPlus_ = tauPlus;
+    stdpTauMinus_ = tauMinus;
+
+    SNNFW_INFO("NetworkPropagator: Updated STDP parameters (A+={}, A-={}, τ+={}, τ-={})",
+               stdpAPlus_, stdpAMinus_, stdpTauPlus_, stdpTauMinus_);
 }
 
 } // namespace snnfw

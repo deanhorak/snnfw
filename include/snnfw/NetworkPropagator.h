@@ -6,6 +6,7 @@
 #include "snnfw/Synapse.h"
 #include "snnfw/Dendrite.h"
 #include "snnfw/SpikeProcessor.h"
+#include "snnfw/SpikeAcknowledgment.h"
 #include <memory>
 #include <map>
 #include <vector>
@@ -84,16 +85,43 @@ public:
 
     /**
      * @brief Deliver a spike to a target neuron via dendrite
-     * 
+     *
      * This is called by the dendrite when it receives an action potential.
-     * It inserts the spike into the target neuron's spike buffer.
+     * It inserts the spike into the target neuron's spike buffer and records
+     * the incoming spike for STDP.
      *
      * @param neuronId ID of the target neuron
+     * @param synapseId ID of the synapse that delivered the spike
      * @param spikeTime Time of the spike (in ms)
      * @param amplitude Amplitude of the spike (modulated by synaptic weight)
      * @return true if delivered successfully, false if neuron not found
      */
-    bool deliverSpikeToNeuron(uint64_t neuronId, double spikeTime, double amplitude);
+    bool deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapseId, double spikeTime, double amplitude);
+
+    /**
+     * @brief Send an acknowledgment from a postsynaptic neuron to update a synapse
+     *
+     * This implements the feedback mechanism for STDP. When a neuron fires, it sends
+     * acknowledgments to all synapses that contributed spikes within the temporal window.
+     * The synapse uses the timing information to adjust its weight.
+     *
+     * @param acknowledgment Shared pointer to the spike acknowledgment
+     */
+    void sendAcknowledgment(const std::shared_ptr<SpikeAcknowledgment>& acknowledgment);
+
+    /**
+     * @brief Apply STDP weight update to a synapse
+     *
+     * Uses the classic STDP learning rule:
+     * - If Δt > 0 (pre before post): LTP (strengthen synapse)
+     * - If Δt < 0 (post before pre): LTD (weaken synapse)
+     * - Magnitude decreases exponentially with |Δt|
+     *
+     * @param synapseId ID of the synapse to update
+     * @param timeDifference Δt = t_post - t_pre (in ms)
+     * @return true if synapse was updated, false if not found
+     */
+    bool applySTDP(uint64_t synapseId, double timeDifference);
 
     /**
      * @brief Get a neuron by ID
@@ -151,6 +179,15 @@ public:
      */
     size_t getSynapseCount() const;
 
+    /**
+     * @brief Set STDP learning parameters
+     * @param aPlus LTP amplitude (default: 0.01)
+     * @param aMinus LTD amplitude (default: 0.012)
+     * @param tauPlus LTP time constant in ms (default: 20.0)
+     * @param tauMinus LTD time constant in ms (default: 20.0)
+     */
+    void setSTDPParameters(double aPlus, double aMinus, double tauPlus, double tauMinus);
+
 private:
     // Spike processor for temporal delivery
     std::shared_ptr<SpikeProcessor> spikeProcessor_;
@@ -166,6 +203,12 @@ private:
     mutable std::mutex axonMutex_;
     mutable std::mutex synapseMutex_;
     mutable std::mutex dendriteMutex_;
+
+    // STDP learning parameters
+    double stdpAPlus_;      ///< LTP amplitude (default: 0.01)
+    double stdpAMinus_;     ///< LTD amplitude (default: 0.012)
+    double stdpTauPlus_;    ///< LTP time constant in ms (default: 20.0)
+    double stdpTauMinus_;   ///< LTD time constant in ms (default: 20.0)
 };
 
 } // namespace snnfw

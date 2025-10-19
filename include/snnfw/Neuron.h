@@ -5,13 +5,15 @@
 #include <vector>
 #include <cstddef>
 #include <memory>
+#include <deque>
 
 namespace snnfw {
 
-// Forward declaration
+// Forward declarations
 namespace learning {
     class PatternUpdateStrategy;
 }
+class NetworkPropagator;
 
 /**
  * @brief Neuron class for spiking neural network with temporal pattern learning
@@ -161,12 +163,50 @@ public:
      */
     size_t getDendriteCount() const { return dendriteIds.size(); }
 
+    /**
+     * @brief Record an incoming spike from a synapse (for STDP)
+     * @param synapseId ID of the synapse that delivered the spike
+     * @param spikeTime Time when the spike arrived
+     */
+    void recordIncomingSpike(uint64_t synapseId, double spikeTime);
+
+    /**
+     * @brief Fire the neuron and send acknowledgments to presynaptic neurons
+     * @param firingTime Time when this neuron fires
+     * @return Number of acknowledgments sent
+     */
+    int fireAndAcknowledge(double firingTime);
+
+    /**
+     * @brief Set the NetworkPropagator for sending acknowledgments
+     * @param propagator Weak pointer to the NetworkPropagator
+     */
+    void setNetworkPropagator(std::weak_ptr<NetworkPropagator> propagator) {
+        networkPropagator_ = propagator;
+    }
+
+    /**
+     * @brief Clear old incoming spike records outside the temporal window
+     * @param currentTime Current simulation time
+     */
+    void clearOldIncomingSpikes(double currentTime);
+
     // Serializable interface implementation
     std::string toJson() const override;
     bool fromJson(const std::string& json) override;
     std::string getTypeName() const override { return "Neuron"; }
 
 private:
+    /**
+     * @brief Structure to track incoming spikes for STDP
+     */
+    struct IncomingSpike {
+        uint64_t synapseId;   ///< ID of the synapse that delivered the spike
+        double arrivalTime;   ///< Time when the spike arrived at this neuron
+
+        IncomingSpike(uint64_t synId, double time) : synapseId(synId), arrivalTime(time) {}
+    };
+
     std::vector<double> spikes;                          ///< Rolling spike window
     std::vector<std::vector<double>> referencePatterns;  ///< Learned reference patterns
     double windowSize;                                   ///< Size of rolling window in ms
@@ -177,6 +217,10 @@ private:
     std::vector<uint64_t> dendriteIds;                   ///< IDs of dendrites connected to this neuron
 
     std::shared_ptr<learning::PatternUpdateStrategy> patternStrategy_;  ///< Strategy for updating patterns (optional)
+
+    // STDP-related members
+    std::deque<IncomingSpike> incomingSpikes_;           ///< Recent incoming spikes for STDP (within window)
+    std::weak_ptr<NetworkPropagator> networkPropagator_; ///< Reference to NetworkPropagator for sending acknowledgments
 
     /**
      * @brief Remove spikes outside the rolling window

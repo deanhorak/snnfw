@@ -51,6 +51,7 @@ void Dendrite::receiveSpike(const std::shared_ptr<ActionPotential>& actionPotent
     if (propagator) {
         propagator->deliverSpikeToNeuron(
             targetNeuronId,
+            actionPotential->getSynapseId(),
             actionPotential->getScheduledTime(),
             actionPotential->getAmplitude()
         );

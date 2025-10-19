@@ -1,6 +1,8 @@
 #include "snnfw/Neuron.h"
 #include "snnfw/Logger.h"
 #include "snnfw/learning/PatternUpdateStrategy.h"
+#include "snnfw/NetworkPropagator.h"
+#include "snnfw/SpikeAcknowledgment.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <cmath>
@@ -376,6 +378,59 @@ bool Neuron::fromJson(const std::string& jsonStr) {
     } catch (const std::exception& e) {
         SNNFW_ERROR("Failed to deserialize Neuron from JSON: {}", e.what());
         return false;
+    }
+}
+
+void Neuron::recordIncomingSpike(uint64_t synapseId, double spikeTime) {
+    // Add the incoming spike to our tracking deque
+    incomingSpikes_.emplace_back(synapseId, spikeTime);
+
+    // Clean up old spikes outside the temporal window
+    clearOldIncomingSpikes(spikeTime);
+
+    SNNFW_TRACE("Neuron {}: Recorded incoming spike from synapse {} at time {:.3f}ms (total tracked: {})",
+                getId(), synapseId, spikeTime, incomingSpikes_.size());
+}
+
+int Neuron::fireAndAcknowledge(double firingTime) {
+    auto propagator = networkPropagator_.lock();
+    if (!propagator) {
+        SNNFW_WARN("Neuron {}: Cannot send acknowledgments - NetworkPropagator not set", getId());
+        return 0;
+    }
+
+    int acknowledgmentCount = 0;
+
+    // Send acknowledgments to all presynaptic neurons that contributed spikes
+    // within the temporal window
+    for (const auto& incomingSpike : incomingSpikes_) {
+        // Create acknowledgment with timing information
+        auto ack = std::make_shared<SpikeAcknowledgment>(
+            incomingSpike.synapseId,
+            getId(),  // postsynaptic neuron ID
+            firingTime,
+            incomingSpike.arrivalTime
+        );
+
+        // Send acknowledgment back through the NetworkPropagator
+        propagator->sendAcknowledgment(ack);
+        acknowledgmentCount++;
+
+        SNNFW_TRACE("Neuron {}: Sent acknowledgment for synapse {} (Δt = {:.3f}ms)",
+                    getId(), incomingSpike.synapseId, ack->getTimeDifference());
+    }
+
+    SNNFW_DEBUG("Neuron {}: Fired at {:.3f}ms and sent {} acknowledgments",
+                getId(), firingTime, acknowledgmentCount);
+
+    return acknowledgmentCount;
+}
+
+void Neuron::clearOldIncomingSpikes(double currentTime) {
+    // Remove spikes that are older than the temporal window
+    while (!incomingSpikes_.empty() &&
+           (currentTime - incomingSpikes_.front().arrivalTime > windowSize)) {
+        incomingSpikes_.pop_front();
     }
 }
 
