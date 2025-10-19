@@ -66,6 +66,13 @@ if(GTest_FOUND)
         GTest::gtest_main
     )
 
+    add_executable(test_spike_propagation test_spike_propagation.cpp)
+    target_link_libraries(test_spike_propagation
+        ${PROJECT_NAME}
+        GTest::gtest
+        GTest::gtest_main
+    )
+
     # Note: test_main.cpp disabled until Main class is re-implemented
     # add_executable(test_main test_main.cpp)
     # target_link_libraries(test_main
@@ -84,6 +91,7 @@ if(GTest_FOUND)
     add_test(NAME HierarchicalStructuresTests COMMAND test_hierarchical_structures)
     add_test(NAME DatastoreTests COMMAND test_datastore)
     add_test(NAME AdapterTests COMMAND test_adapters)
+    add_test(NAME SpikePropagationTests COMMAND test_spike_propagation)
     # add_test(NAME MainTests COMMAND test_main)
 else()
     message(STATUS "Google Test not found. Skipping tests.")

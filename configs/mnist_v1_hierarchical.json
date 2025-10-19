@@ -30,6 +30,17 @@
     "examples_per_digit": 5000,
     "test_images": 10000
   },
+  "spike_processor": {
+    "num_threads": 20,
+    "time_slice_ms": 1.0,
+    "buffer_size": 10000
+  },
+  "stdp": {
+    "a_plus": 0.01,
+    "a_minus": 0.012,
+    "tau_plus": 20.0,
+    "tau_minus": 20.0
+  },
   "data": {
     "train_images": "/home/dean/repos/ctm/data/MNIST/raw/train-images-idx3-ubyte",
     "train_labels": "/home/dean/repos/ctm/data/MNIST/raw/train-labels-idx1-ubyte",
