@@ -1,0 +1,702 @@
+/**
+ * @file mnist_v1_hierarchical.cpp
+ * @brief MNIST with Anatomically-Correct V1 Hierarchical Structure
+ *
+ * This experiment implements a biologically-inspired hierarchical visual processing
+ * network based on the anatomical pathway from Occipital Lobe to V1 (Primary Visual Cortex).
+ *
+ * Hierarchical Structure:
+ * Brain → Hemisphere → Occipital Lobe → V1 Region → Nucleus → Column → Layer 4C
+ *
+ * Architecture (Phase 2 - Multi-Cluster):
+ * - Three input clusters with 512 neurons each (8×8 grid, 8 orientations)
+ * - Each cluster receives different convolution of visual input:
+ *   - Cluster 1: Sobel threshold=0.165 (baseline)
+ *   - Cluster 2: Sobel threshold=0.10 (more sensitive, finer edges)
+ *   - Cluster 3: Sobel threshold=0.25 (less sensitive, strong edges only)
+ * - HybridStrategy learning
+ * - MajorityVoting classification (k=5)
+ * - Total: 1536 neurons (3 × 512)
+ *
+ * Usage:
+ *   ./mnist_v1_hierarchical <config_file>
+ *   ./mnist_v1_hierarchical ../configs/mnist_v1_hierarchical.json
+ */
+
+#include "snnfw/MNISTLoader.h"
+#include "snnfw/Neuron.h"
+#include "snnfw/ConfigLoader.h"
+#include "snnfw/NeuralObjectFactory.h"
+#include "snnfw/Brain.h"
+#include "snnfw/Hemisphere.h"
+#include "snnfw/Lobe.h"
+#include "snnfw/Region.h"
+#include "snnfw/Nucleus.h"
+#include "snnfw/Column.h"
+#include "snnfw/Layer.h"
+#include "snnfw/Cluster.h"
+#include "snnfw/adapters/RetinaAdapter.h"
+#include "snnfw/classification/MajorityVoting.h"
+#include "snnfw/learning/HybridStrategy.h"
+#include <iostream>
+#include <iomanip>
+#include <vector>
+#include <memory>
+#include <chrono>
+#include <mutex>
+#include <random>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+using namespace snnfw;
+using namespace snnfw::adapters;
+using namespace snnfw::classification;
+using namespace snnfw::learning;
+
+// Configuration
+struct V1Config {
+    int trainPerDigit;
+    int testImages;
+    int kNeighbors;
+    std::string trainImagesPath;
+    std::string trainLabelsPath;
+    std::string testImagesPath;
+    std::string testLabelsPath;
+
+    static V1Config fromConfigLoader(const ConfigLoader& config) {
+        V1Config cfg;
+        cfg.trainPerDigit = config.get<int>("/training/examples_per_digit", 5000);
+        cfg.testImages = config.get<int>("/training/test_images", 10000);
+        cfg.kNeighbors = config.get<int>("/classification/k_neighbors", 5);
+        cfg.trainImagesPath = config.getRequired<std::string>("/data/train_images");
+        cfg.trainLabelsPath = config.getRequired<std::string>("/data/train_labels");
+        cfg.testImagesPath = config.getRequired<std::string>("/data/test_images");
+        cfg.testLabelsPath = config.getRequired<std::string>("/data/test_labels");
+        return cfg;
+    }
+};
+
+// Cosine similarity
+double cosineSimilarity(const std::vector<double>& a, const std::vector<double>& b) {
+    double dot = 0.0, normA = 0.0, normB = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+    }
+    if (normA == 0.0 || normB == 0.0) return 0.0;
+    return dot / (std::sqrt(normA) * std::sqrt(normB));
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <config_file>" << std::endl;
+        return 1;
+    }
+
+    try {
+        // Load configuration
+        std::cout << "=== MNIST V1 Hierarchical Architecture ===" << std::endl;
+        std::cout << "Loading configuration from: " << argv[1] << std::endl;
+        ConfigLoader configLoader(argv[1]);
+        V1Config config = V1Config::fromConfigLoader(configLoader);
+
+        // Create hierarchical structure
+        std::cout << "\n=== Building Hierarchical Structure ===" << std::endl;
+        NeuralObjectFactory factory;
+
+        auto brain = factory.createBrain();
+        brain->setName("Visual Processing Network");
+        std::cout << "✓ Created Brain: " << brain->getName() << std::endl;
+
+        auto hemisphere = factory.createHemisphere();
+        hemisphere->setName("Left Hemisphere");
+        brain->addHemisphere(hemisphere->getId());
+        std::cout << "✓ Created Hemisphere: " << hemisphere->getName() << std::endl;
+
+        auto occipitalLobe = factory.createLobe();
+        occipitalLobe->setName("Occipital Lobe");
+        hemisphere->addLobe(occipitalLobe->getId());
+        std::cout << "✓ Created Lobe: " << occipitalLobe->getName() << std::endl;
+
+        auto v1Region = factory.createRegion();
+        v1Region->setName("Primary Visual Cortex (V1)");
+        occipitalLobe->addRegion(v1Region->getId());
+        std::cout << "✓ Created Region: " << v1Region->getName() << std::endl;
+
+        auto v1Nucleus = factory.createNucleus();
+        v1Nucleus->setName("V1 Input Processing Nucleus");
+        v1Region->addNucleus(v1Nucleus->getId());
+        std::cout << "✓ Created Nucleus: " << v1Nucleus->getName() << std::endl;
+
+        auto orientationColumn = factory.createColumn();
+        v1Nucleus->addColumn(orientationColumn->getId());
+        std::cout << "✓ Created Column (ID: " << orientationColumn->getId() << ")" << std::endl;
+
+        auto layer4C = factory.createLayer();
+        orientationColumn->addLayer(layer4C->getId());
+        std::cout << "✓ Created Layer 4C (ID: " << layer4C->getId() << ")" << std::endl;
+
+        // Create 3 input clusters with different convolutions
+        std::cout << "\n=== Creating 3 Input Clusters with Different Convolutions ===" << std::endl;
+
+        // Cluster 1: Sobel threshold=0.165 (baseline)
+        auto inputCluster1 = factory.createCluster();
+        layer4C->addCluster(inputCluster1->getId());
+        std::cout << "✓ Created Cluster 1 (ID: " << inputCluster1->getId() << ")" << std::endl;
+
+        // Cluster 2: Sobel threshold=0.10 (more sensitive)
+        auto inputCluster2 = factory.createCluster();
+        layer4C->addCluster(inputCluster2->getId());
+        std::cout << "✓ Created Cluster 2 (ID: " << inputCluster2->getId() << ")" << std::endl;
+
+        // Cluster 3: Sobel threshold=0.25 (less sensitive)
+        auto inputCluster3 = factory.createCluster();
+        layer4C->addCluster(inputCluster3->getId());
+        std::cout << "✓ Created Cluster 3 (ID: " << inputCluster3->getId() << ")" << std::endl;
+
+        // Create 3 RetinaAdapters with different edge thresholds
+        std::cout << "\n=== Creating 3 RetinaAdapters ===" << std::endl;
+
+        // RetinaAdapter 1: threshold=0.165 (baseline)
+        auto retinaConfig1 = configLoader.getAdapterConfig("retina");
+        retinaConfig1.doubleParams["edge_threshold"] = 0.165;
+        auto retina1 = std::make_shared<RetinaAdapter>(retinaConfig1);
+        retina1->initialize();
+        std::cout << "✓ RetinaAdapter 1: " << retina1->getNeurons().size() << " neurons, threshold=0.165" << std::endl;
+
+        // RetinaAdapter 2: threshold=0.10 (more sensitive)
+        auto retinaConfig2 = configLoader.getAdapterConfig("retina");
+        retinaConfig2.doubleParams["edge_threshold"] = 0.10;
+        auto retina2 = std::make_shared<RetinaAdapter>(retinaConfig2);
+        retina2->initialize();
+        std::cout << "✓ RetinaAdapter 2: " << retina2->getNeurons().size() << " neurons, threshold=0.10" << std::endl;
+
+        // RetinaAdapter 3: threshold=0.25 (less sensitive)
+        auto retinaConfig3 = configLoader.getAdapterConfig("retina");
+        retinaConfig3.doubleParams["edge_threshold"] = 0.25;
+        auto retina3 = std::make_shared<RetinaAdapter>(retinaConfig3);
+        retina3->initialize();
+        std::cout << "✓ RetinaAdapter 3: " << retina3->getNeurons().size() << " neurons, threshold=0.25" << std::endl;
+
+        // Add neurons to clusters
+        for (const auto& neuron : retina1->getNeurons()) {
+            inputCluster1->addNeuron(neuron->getId());
+        }
+        for (const auto& neuron : retina2->getNeurons()) {
+            inputCluster2->addNeuron(neuron->getId());
+        }
+        for (const auto& neuron : retina3->getNeurons()) {
+            inputCluster3->addNeuron(neuron->getId());
+        }
+        std::cout << "✓ Added neurons to clusters (512 neurons each)" << std::endl;
+        std::cout << "  Total neurons: " << (inputCluster1->size() + inputCluster2->size() + inputCluster3->size()) << std::endl;
+
+        // ========================================================================
+        // Create Interneuron Columns (3 columns, 128 neurons each)
+        // ========================================================================
+        std::cout << "\n=== Creating Interneuron Columns ===" << std::endl;
+
+        // Create 3 interneuron clusters (one between each pair of adjacent input clusters)
+        auto interneuronCluster1 = factory.createCluster();  // Between input clusters 1 and 2
+        auto interneuronCluster2 = factory.createCluster();  // Between input clusters 2 and 3
+        auto interneuronCluster3 = factory.createCluster();  // Between input clusters 3 and 1 (ring)
+        layer4C->addCluster(interneuronCluster1->getId());
+        layer4C->addCluster(interneuronCluster2->getId());
+        layer4C->addCluster(interneuronCluster3->getId());
+
+        // Create interneurons (128 per column, same parameters as input neurons)
+        std::vector<std::shared_ptr<Neuron>> interneurons1, interneurons2, interneurons3;
+        double neuronWindow = configLoader.get<double>("/neuron/window_size_ms", 200.0);
+        double neuronThreshold = configLoader.get<double>("/neuron/similarity_threshold", 0.7);
+        int neuronMaxPatterns = configLoader.get<int>("/neuron/max_patterns", 100);
+
+        for (int i = 0; i < 128; ++i) {
+            auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
+            interneurons1.push_back(neuron);
+            interneuronCluster1->addNeuron(neuron->getId());
+        }
+        for (int i = 0; i < 128; ++i) {
+            auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
+            interneurons2.push_back(neuron);
+            interneuronCluster2->addNeuron(neuron->getId());
+        }
+        for (int i = 0; i < 128; ++i) {
+            auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
+            interneurons3.push_back(neuron);
+            interneuronCluster3->addNeuron(neuron->getId());
+        }
+
+        std::cout << "✓ Created 3 interneuron columns (128 neurons each)" << std::endl;
+        std::cout << "  Total interneurons: " << (interneurons1.size() + interneurons2.size() + interneurons3.size()) << std::endl;
+
+        // ========================================================================
+        // Create Sparse Connections Between Adjacent Clusters (50% connectivity)
+        // ========================================================================
+        std::cout << "\n=== Creating Sparse Horizontal Connections ===" << std::endl;
+
+        // Helper lambda to create sparse bidirectional connections
+        auto createSparseConnections = [&factory](
+            const std::vector<std::shared_ptr<Neuron>>& sourceNeurons,
+            const std::vector<std::shared_ptr<Neuron>>& interneurons,
+            const std::vector<std::shared_ptr<Neuron>>& targetNeurons,
+            double connectivity) {
+
+            int connectionCount = 0;
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<> dis(0.0, 1.0);
+
+            // Connect source cluster → interneurons (50% sparse)
+            for (const auto& sourceNeuron : sourceNeurons) {
+                // Create axon for source neuron if not exists
+                if (sourceNeuron->getAxonId() == 0) {
+                    auto axon = factory.createAxon(sourceNeuron->getId());
+                    sourceNeuron->setAxonId(axon->getId());
+                }
+
+                for (const auto& interneuron : interneurons) {
+                    if (dis(gen) < connectivity) {
+                        // Create dendrite for interneuron
+                        auto dendrite = factory.createDendrite(interneuron->getId());
+                        interneuron->addDendrite(dendrite->getId());
+
+                        // Create synapse connecting them
+                        auto synapse = factory.createSynapse(
+                            sourceNeuron->getAxonId(),
+                            dendrite->getId(),
+                            1.0,  // weight
+                            1.0   // delay (ms)
+                        );
+
+                        connectionCount++;
+                    }
+                }
+            }
+
+            // Connect interneurons → target cluster (50% sparse)
+            for (const auto& interneuron : interneurons) {
+                // Create axon for interneuron if not exists
+                if (interneuron->getAxonId() == 0) {
+                    auto axon = factory.createAxon(interneuron->getId());
+                    interneuron->setAxonId(axon->getId());
+                }
+
+                for (const auto& targetNeuron : targetNeurons) {
+                    if (dis(gen) < connectivity) {
+                        // Create dendrite for target neuron
+                        auto dendrite = factory.createDendrite(targetNeuron->getId());
+                        targetNeuron->addDendrite(dendrite->getId());
+
+                        // Create synapse connecting them
+                        auto synapse = factory.createSynapse(
+                            interneuron->getAxonId(),
+                            dendrite->getId(),
+                            1.0,  // weight
+                            1.0   // delay (ms)
+                        );
+
+                        connectionCount++;
+                    }
+                }
+            }
+
+            return connectionCount;
+        };
+
+        // Create connections: Cluster1 ↔ Interneurons1 ↔ Cluster2
+        int conn1 = createSparseConnections(retina1->getNeurons(), interneurons1, retina2->getNeurons(), 0.5);
+        std::cout << "✓ Connected Cluster 1 ↔ Interneurons 1 ↔ Cluster 2: " << conn1 << " synapses" << std::endl;
+
+        // Create connections: Cluster2 ↔ Interneurons2 ↔ Cluster3
+        int conn2 = createSparseConnections(retina2->getNeurons(), interneurons2, retina3->getNeurons(), 0.5);
+        std::cout << "✓ Connected Cluster 2 ↔ Interneurons 2 ↔ Cluster 3: " << conn2 << " synapses" << std::endl;
+
+        // Create connections: Cluster3 ↔ Interneurons3 ↔ Cluster1 (ring topology)
+        int conn3 = createSparseConnections(retina3->getNeurons(), interneurons3, retina1->getNeurons(), 0.5);
+        std::cout << "✓ Connected Cluster 3 ↔ Interneurons 3 ↔ Cluster 1: " << conn3 << " synapses" << std::endl;
+        std::cout << "  Total synapses: " << (conn1 + conn2 + conn3) << std::endl;
+
+        // ========================================================================
+        // Create V1 Hidden Layer (512 neurons)
+        // ========================================================================
+        std::cout << "\n=== Creating V1 Hidden Layer ===" << std::endl;
+
+        auto v1HiddenLayer = factory.createLayer();
+        orientationColumn->addLayer(v1HiddenLayer->getId());
+
+        auto v1HiddenCluster = factory.createCluster();
+        v1HiddenLayer->addCluster(v1HiddenCluster->getId());
+
+        // Create 512 V1 hidden neurons
+        std::vector<std::shared_ptr<Neuron>> v1HiddenNeurons;
+        for (int i = 0; i < 512; ++i) {
+            auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
+            v1HiddenNeurons.push_back(neuron);
+            v1HiddenCluster->addNeuron(neuron->getId());
+        }
+
+        std::cout << "✓ Created V1 hidden layer: " << v1HiddenNeurons.size() << " neurons" << std::endl;
+
+        // Connect all input sources to V1 hidden layer (sparse 25% connectivity)
+        std::cout << "\n=== Connecting Input Sources to V1 Hidden Layer ===" << std::endl;
+
+        std::random_device rd2;
+        std::mt19937 gen2(rd2());
+        std::uniform_real_distribution<> dis2(0.0, 1.0);
+
+        int v1Connections = 0;
+        double v1Connectivity = 0.25;  // 25% sparse connectivity
+
+        // Collect all source neurons (input clusters + interneurons)
+        std::vector<std::shared_ptr<Neuron>> allSourceNeurons;
+        allSourceNeurons.insert(allSourceNeurons.end(), retina1->getNeurons().begin(), retina1->getNeurons().end());
+        allSourceNeurons.insert(allSourceNeurons.end(), retina2->getNeurons().begin(), retina2->getNeurons().end());
+        allSourceNeurons.insert(allSourceNeurons.end(), retina3->getNeurons().begin(), retina3->getNeurons().end());
+        allSourceNeurons.insert(allSourceNeurons.end(), interneurons1.begin(), interneurons1.end());
+        allSourceNeurons.insert(allSourceNeurons.end(), interneurons2.begin(), interneurons2.end());
+        allSourceNeurons.insert(allSourceNeurons.end(), interneurons3.begin(), interneurons3.end());
+
+        std::cout << "  Total source neurons: " << allSourceNeurons.size() << " (1536 input + 384 interneurons)" << std::endl;
+
+        // Create sparse connections from all sources to V1 hidden neurons
+        for (const auto& sourceNeuron : allSourceNeurons) {
+            // Create axon for source neuron if not exists
+            if (sourceNeuron->getAxonId() == 0) {
+                auto axon = factory.createAxon(sourceNeuron->getId());
+                sourceNeuron->setAxonId(axon->getId());
+            }
+
+            for (const auto& v1Neuron : v1HiddenNeurons) {
+                if (dis2(gen2) < v1Connectivity) {
+                    // Create dendrite for V1 neuron
+                    auto dendrite = factory.createDendrite(v1Neuron->getId());
+                    v1Neuron->addDendrite(dendrite->getId());
+
+                    // Create synapse
+                    auto synapse = factory.createSynapse(
+                        sourceNeuron->getAxonId(),
+                        dendrite->getId(),
+                        1.0,  // weight
+                        1.0   // delay (ms)
+                    );
+
+                    v1Connections++;
+                }
+            }
+        }
+
+        std::cout << "✓ Connected sources to V1 hidden layer: " << v1Connections << " synapses" << std::endl;
+
+        // ========================================================================
+        // Create Output Layer (10 neurons for digit classification)
+        // ========================================================================
+        std::cout << "\n=== Creating Output Layer ===" << std::endl;
+
+        auto outputLayer = factory.createLayer();
+        orientationColumn->addLayer(outputLayer->getId());
+
+        auto outputCluster = factory.createCluster();
+        outputLayer->addCluster(outputCluster->getId());
+
+        // Create 10 output neurons (one per digit)
+        std::vector<std::shared_ptr<Neuron>> outputNeurons;
+        for (int i = 0; i < 10; ++i) {
+            auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
+            outputNeurons.push_back(neuron);
+            outputCluster->addNeuron(neuron->getId());
+        }
+
+        std::cout << "✓ Created output layer: " << outputNeurons.size() << " neurons (one per digit)" << std::endl;
+
+        // Connect V1 hidden layer to output neurons (50% connectivity)
+        std::cout << "\n=== Connecting V1 Hidden Layer to Output ===" << std::endl;
+
+        std::random_device rd3;
+        std::mt19937 gen3(rd3());
+        std::uniform_real_distribution<> dis3(0.0, 1.0);
+
+        int outputConnections = 0;
+        double outputConnectivity = 0.5;  // 50% connectivity
+
+        for (const auto& v1Neuron : v1HiddenNeurons) {
+            // Create axon for V1 neuron if not exists
+            if (v1Neuron->getAxonId() == 0) {
+                auto axon = factory.createAxon(v1Neuron->getId());
+                v1Neuron->setAxonId(axon->getId());
+            }
+
+            for (const auto& outputNeuron : outputNeurons) {
+                if (dis3(gen3) < outputConnectivity) {
+                    // Create dendrite for output neuron
+                    auto dendrite = factory.createDendrite(outputNeuron->getId());
+                    outputNeuron->addDendrite(dendrite->getId());
+
+                    // Create synapse
+                    auto synapse = factory.createSynapse(
+                        v1Neuron->getAxonId(),
+                        dendrite->getId(),
+                        1.0,  // weight
+                        1.0   // delay (ms)
+                    );
+
+                    outputConnections++;
+                }
+            }
+        }
+
+        std::cout << "✓ Connected V1 to output layer: " << outputConnections << " synapses" << std::endl;
+
+        // Print network summary
+        std::cout << "\n=== Network Architecture Summary ===" << std::endl;
+        std::cout << "  Input Layer:       1536 neurons (3 clusters × 512)" << std::endl;
+        std::cout << "  Interneurons:       384 neurons (3 columns × 128)" << std::endl;
+        std::cout << "  V1 Hidden Layer:    512 neurons" << std::endl;
+        std::cout << "  Output Layer:        10 neurons" << std::endl;
+        std::cout << "  Total Neurons:     2442 neurons" << std::endl;
+        std::cout << "  Total Synapses:    " << (conn1 + conn2 + conn3 + v1Connections + outputConnections) << " synapses" << std::endl;
+
+        // Create learning strategy
+        PatternUpdateStrategy::Config strategyConfig;
+        strategyConfig.maxPatterns = configLoader.get<int>("/neuron/max_patterns", 100);
+        strategyConfig.similarityThreshold = configLoader.get<double>("/neuron/similarity_threshold", 0.7);
+        strategyConfig.doubleParams["merge_threshold"] = configLoader.get<double>("/learning/merge_threshold", 0.85);
+        strategyConfig.doubleParams["merge_weight"] = configLoader.get<double>("/learning/merge_weight", 0.3);
+        strategyConfig.doubleParams["blend_alpha"] = configLoader.get<double>("/learning/blend_alpha", 0.2);
+        strategyConfig.intParams["prune_threshold"] = configLoader.get<int>("/learning/prune_threshold", 2);
+
+        auto strategy = std::make_shared<HybridStrategy>(strategyConfig);
+
+        // Set strategy for all neurons in the network
+        for (const auto& neuron : retina1->getNeurons()) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : retina2->getNeurons()) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : retina3->getNeurons()) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : interneurons1) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : interneurons2) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : interneurons3) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : v1HiddenNeurons) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        for (const auto& neuron : outputNeurons) {
+            neuron->setPatternUpdateStrategy(strategy);
+        }
+        std::cout << "✓ Applied HybridStrategy to all 2442 neurons" << std::endl;
+
+        // Load MNIST data
+        std::cout << "\n=== Loading MNIST Data ===" << std::endl;
+        MNISTLoader trainLoader;
+        MNISTLoader testLoader;
+
+        if (!trainLoader.load(config.trainImagesPath, config.trainLabelsPath)) {
+            std::cerr << "Failed to load training data" << std::endl;
+            return 1;
+        }
+        if (!testLoader.load(config.testImagesPath, config.testLabelsPath)) {
+            std::cerr << "Failed to load test data" << std::endl;
+            return 1;
+        }
+
+        std::cout << "✓ Loaded " << trainLoader.size() << " training images" << std::endl;
+        std::cout << "✓ Loaded " << testLoader.size() << " test images" << std::endl;
+
+        // Training
+        std::cout << "\n=== Training Phase ===" << std::endl;
+        auto trainStart = std::chrono::steady_clock::now();
+
+        // First pass: collect indices of images to train on
+        std::vector<size_t> trainingIndices;
+        std::vector<int> trainCount(10, 0);
+        for (size_t i = 0; i < trainLoader.size(); ++i) {
+            int label = trainLoader.getImage(i).label;
+            if (trainCount[label] < config.trainPerDigit) {
+                trainingIndices.push_back(i);
+                trainCount[label]++;
+            }
+        }
+
+        std::cout << "  Selected " << trainingIndices.size() << " training images" << std::endl;
+
+        // Second pass: process images sequentially (neurons are not thread-safe for learning)
+        std::vector<ClassificationStrategy::LabeledPattern> trainingPatterns;
+        trainingPatterns.reserve(trainingIndices.size());
+
+        for (size_t idx = 0; idx < trainingIndices.size(); ++idx) {
+            size_t i = trainingIndices[idx];
+            int label = trainLoader.getImage(i).label;
+
+            // Convert MNISTLoader::Image to RetinaAdapter::Image
+            RetinaAdapter::Image img;
+            img.pixels = trainLoader.getImage(i).pixels;
+            img.rows = trainLoader.getImage(i).rows;
+            img.cols = trainLoader.getImage(i).cols;
+
+            // Process through all 3 retinas with different convolutions
+            auto activation1 = retina1->processImage(img);
+            auto activation2 = retina2->processImage(img);
+            auto activation3 = retina3->processImage(img);
+
+            // Concatenate activations from all 3 clusters
+            std::vector<double> combinedActivation;
+            combinedActivation.reserve(activation1.size() + activation2.size() + activation3.size());
+            combinedActivation.insert(combinedActivation.end(), activation1.begin(), activation1.end());
+            combinedActivation.insert(combinedActivation.end(), activation2.begin(), activation2.end());
+            combinedActivation.insert(combinedActivation.end(), activation3.begin(), activation3.end());
+
+            // Learn patterns in all neurons
+            for (const auto& neuron : retina1->getNeurons()) {
+                neuron->learnCurrentPattern();
+            }
+            for (const auto& neuron : retina2->getNeurons()) {
+                neuron->learnCurrentPattern();
+            }
+            for (const auto& neuron : retina3->getNeurons()) {
+                neuron->learnCurrentPattern();
+            }
+
+            trainingPatterns.emplace_back(combinedActivation, label);
+
+            if ((idx + 1) % 5000 == 0) {
+                std::cout << "  Processed " << (idx + 1) << " images..." << std::endl;
+            }
+        }
+
+        auto trainEnd = std::chrono::steady_clock::now();
+        double trainTime = std::chrono::duration<double>(trainEnd - trainStart).count();
+        
+        std::cout << "✓ Training complete in " << std::fixed << std::setprecision(1) 
+                  << trainTime << "s" << std::endl;
+        for (int d = 0; d < 10; ++d) {
+            std::cout << "  Digit " << d << ": " << trainCount[d] << " patterns" << std::endl;
+        }
+
+        // Testing
+        std::cout << "\n=== Testing Phase ===" << std::endl;
+        #ifdef _OPENMP
+        std::cout << "OpenMP: Using " << omp_get_max_threads() << " threads for k-NN classification" << std::endl;
+        #else
+        std::cout << "OpenMP: Not enabled (single-threaded)" << std::endl;
+        #endif
+        auto testStart = std::chrono::steady_clock::now();
+
+        ClassificationStrategy::Config classifierConfig;
+        classifierConfig.k = config.kNeighbors;
+        classifierConfig.numClasses = 10;
+        classifierConfig.distanceExponent = 2.0;
+
+        MajorityVoting classifier(classifierConfig);
+        int correct = 0;
+        std::vector<int> perDigitCorrect(10, 0);
+        std::vector<int> perDigitTotal(10, 0);
+
+        size_t numTestImages = std::min((size_t)config.testImages, testLoader.size());
+
+        // Mutexes to protect retina processing (not thread-safe)
+        std::mutex retina1Mutex, retina2Mutex, retina3Mutex;
+
+        #pragma omp parallel for schedule(dynamic, 10) reduction(+:correct)
+        for (size_t i = 0; i < numTestImages; ++i) {
+            int trueLabel = testLoader.getImage(i).label;
+
+            // Convert MNISTLoader::Image to RetinaAdapter::Image
+            RetinaAdapter::Image img;
+            img.pixels = testLoader.getImage(i).pixels;
+            img.rows = testLoader.getImage(i).rows;
+            img.cols = testLoader.getImage(i).cols;
+
+            // Process through all 3 retinas with different convolutions (protected by mutexes)
+            std::vector<double> activation1, activation2, activation3;
+            {
+                std::lock_guard<std::mutex> lock(retina1Mutex);
+                activation1 = retina1->processImage(img);
+            }
+            {
+                std::lock_guard<std::mutex> lock(retina2Mutex);
+                activation2 = retina2->processImage(img);
+            }
+            {
+                std::lock_guard<std::mutex> lock(retina3Mutex);
+                activation3 = retina3->processImage(img);
+            }
+
+            // Concatenate activations from all 3 clusters
+            std::vector<double> combinedActivation;
+            combinedActivation.reserve(activation1.size() + activation2.size() + activation3.size());
+            combinedActivation.insert(combinedActivation.end(), activation1.begin(), activation1.end());
+            combinedActivation.insert(combinedActivation.end(), activation2.begin(), activation2.end());
+            combinedActivation.insert(combinedActivation.end(), activation3.begin(), activation3.end());
+
+            int predicted = classifier.classify(combinedActivation, trainingPatterns, cosineSimilarity);
+
+            if (predicted == trueLabel) {
+                correct++;
+                #pragma omp atomic
+                perDigitCorrect[trueLabel]++;
+            }
+            #pragma omp atomic
+            perDigitTotal[trueLabel]++;
+
+            #pragma omp critical
+            {
+                if ((i + 1) % 1000 == 0) {
+                    std::cout << "  Tested " << (i + 1) << " images..." << std::endl;
+                }
+            }
+        }
+
+        auto testEnd = std::chrono::steady_clock::now();
+        double testTime = std::chrono::duration<double>(testEnd - testStart).count();
+
+        // Results
+        std::cout << "\n=== Results ===" << std::endl;
+        std::cout << "Overall Accuracy: " << std::fixed << std::setprecision(2)
+                  << (100.0 * correct / config.testImages) << "% "
+                  << "(" << correct << "/" << config.testImages << ")" << std::endl;
+        
+        std::cout << "\nPer-Digit Accuracy:" << std::endl;
+        for (int d = 0; d < 10; ++d) {
+            double acc = perDigitTotal[d] > 0 ? 100.0 * perDigitCorrect[d] / perDigitTotal[d] : 0.0;
+            std::cout << "  Digit " << d << ": " << std::setw(5) << std::fixed << std::setprecision(1)
+                      << acc << "% (" << perDigitCorrect[d] << "/" << perDigitTotal[d] << ")" << std::endl;
+        }
+
+        std::cout << "\nTiming:" << std::endl;
+        std::cout << "  Training: " << std::fixed << std::setprecision(1) << trainTime << "s" << std::endl;
+        std::cout << "  Testing:  " << std::fixed << std::setprecision(1) << testTime << "s" << std::endl;
+
+        std::cout << "\n=== Hierarchical Structure Summary ===" << std::endl;
+        std::cout << "Brain: " << brain->getName() << std::endl;
+        std::cout << "  └─ Hemisphere: " << hemisphere->getName() << std::endl;
+        std::cout << "      └─ Lobe: " << occipitalLobe->getName() << std::endl;
+        std::cout << "          └─ Region: " << v1Region->getName() << std::endl;
+        std::cout << "              └─ Nucleus: " << v1Nucleus->getName() << std::endl;
+        std::cout << "                  └─ Column: Orientation Column (ID: " << orientationColumn->getId() << ")" << std::endl;
+        std::cout << "                      └─ Layer: Layer 4C (ID: " << layer4C->getId() << ")" << std::endl;
+        std::cout << "                          ├─ Cluster 1: Sobel threshold=0.165 (ID: " << inputCluster1->getId()
+                  << ", " << inputCluster1->size() << " neurons)" << std::endl;
+        std::cout << "                          ├─ Cluster 2: Sobel threshold=0.10 (ID: " << inputCluster2->getId()
+                  << ", " << inputCluster2->size() << " neurons)" << std::endl;
+        std::cout << "                          └─ Cluster 3: Sobel threshold=0.25 (ID: " << inputCluster3->getId()
+                  << ", " << inputCluster3->size() << " neurons)" << std::endl;
+        std::cout << "\nTotal neurons: " << (inputCluster1->size() + inputCluster2->size() + inputCluster3->size()) << std::endl;
+
+        return 0;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+}
+

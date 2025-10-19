@@ -6,6 +6,8 @@
 #include <memory>
 #include <map>
 #include <functional>
+#include <iostream>
+#include <omp.h>
 
 namespace snnfw {
 namespace classification {
@@ -124,7 +126,7 @@ protected:
     Config config_; ///< Strategy configuration
 
     /**
-     * @brief Helper: Find k nearest neighbors
+     * @brief Helper: Find k nearest neighbors (parallelized)
      * @param testPattern Pattern to classify
      * @param trainingPatterns Labeled training patterns
      * @param similarityMetric Similarity function
@@ -136,12 +138,13 @@ protected:
         const std::vector<LabeledPattern>& trainingPatterns,
         std::function<double(const std::vector<double>&, const std::vector<double>&)> similarityMetric,
         int k) const {
-        
-        // Compute similarities for all training patterns
-        std::vector<std::pair<int, double>> similarities;
+
+        // Compute similarities for all training patterns (sequential - parallelization at higher level)
+        std::vector<std::pair<int, double>> similarities(trainingPatterns.size());
+
         for (size_t i = 0; i < trainingPatterns.size(); ++i) {
             double sim = similarityMetric(testPattern, trainingPatterns[i].pattern);
-            similarities.push_back({static_cast<int>(i), sim});
+            similarities[i] = {static_cast<int>(i), sim};
         }
 
         // Sort by similarity (descending)
@@ -151,7 +154,7 @@ protected:
         // Return top k
         int actualK = std::min(k, static_cast<int>(similarities.size()));
         return std::vector<std::pair<int, double>>(
-            similarities.begin(), 
+            similarities.begin(),
             similarities.begin() + actualK);
     }
 

@@ -8,8 +8,9 @@
 
 namespace snnfw {
 
-// Forward declaration
+// Forward declarations
 class ActionPotential;
+class NetworkPropagator;
 
 /**
  * @brief Dendrite class representing the input terminal of a neuron
@@ -85,6 +86,14 @@ public:
      */
     void receiveSpike(const std::shared_ptr<ActionPotential>& actionPotential);
 
+    /**
+     * @brief Set the network propagator for spike delivery
+     * @param propagator Weak pointer to the network propagator
+     */
+    void setNetworkPropagator(std::weak_ptr<NetworkPropagator> propagator) {
+        networkPropagator_ = propagator;
+    }
+
     // Serializable interface implementation
     std::string toJson() const override;
     bool fromJson(const std::string& json) override;
@@ -93,6 +102,7 @@ public:
 private:
     uint64_t targetNeuronId;              ///< ID of the neuron this dendrite belongs to
     std::vector<uint64_t> synapseIds;     ///< IDs of synapses connected to this dendrite
+    std::weak_ptr<NetworkPropagator> networkPropagator_; ///< Weak pointer to network propagator for spike delivery
 };
 
 } // namespace snnfw

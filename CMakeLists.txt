@@ -20,6 +20,9 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Find OpenMP for parallelization
+find_package(OpenMP REQUIRED)
+
 # Compiler flags
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -Wpedantic -fsanitize=address -fno-omit-frame-pointer")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
@@ -137,6 +140,7 @@ set(LIB_SOURCES
     src/Dendrite.cpp
     src/Synapse.cpp
     src/SpikeProcessor.cpp
+    src/NetworkPropagator.cpp
     src/NeuralObjectFactory.cpp
     src/Datastore.cpp
     src/MNISTLoader.cpp
@@ -194,6 +198,9 @@ target_include_directories(${PROJECT_NAME}
 
 # Set C++ standard
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+
+# Link OpenMP
+target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
 
 # Main executable
 add_executable(${PROJECT_NAME}_app src/Main.cpp)
@@ -291,6 +298,13 @@ target_link_libraries(mnist_learning_strategies ${PROJECT_NAME} sonata::sonata_s
 target_include_directories(mnist_learning_strategies PRIVATE
     ${highfive_SOURCE_DIR}/include
     ${libsonata_SOURCE_DIR}/include
+)
+
+add_executable(mnist_v1_hierarchical experiments/mnist_v1_hierarchical.cpp)
+target_link_libraries(mnist_v1_hierarchical ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
+target_include_directories(mnist_v1_hierarchical PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external/libsonata/include
 )
 
 # Testing (optional)

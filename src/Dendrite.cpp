@@ -1,5 +1,6 @@
 #include "snnfw/Dendrite.h"
 #include "snnfw/ActionPotential.h"
+#include "snnfw/NetworkPropagator.h"
 #include "snnfw/Logger.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -38,20 +39,26 @@ void Dendrite::receiveSpike(const std::shared_ptr<ActionPotential>& actionPotent
         return;
     }
 
-    SNNFW_DEBUG("Dendrite {} (Neuron {}): Received spike from synapse {} at time {:.3f}ms (amplitude: {:.3f})",
-                getId(), 
+    SNNFW_TRACE("Dendrite {} (Neuron {}): Received spike from synapse {} at time {:.3f}ms (amplitude: {:.3f})",
+                getId(),
                 targetNeuronId,
                 actionPotential->getSynapseId(),
                 actionPotential->getScheduledTime(),
                 actionPotential->getAmplitude());
 
-    // Here we would typically:
-    // 1. Integrate the spike into the neuron's membrane potential
-    // 2. Update synaptic efficacy (STDP, etc.)
-    // 3. Check if neuron should fire
-    //
-    // For now, we just log the reception. This will be extended when
-    // we integrate with the Neuron class's spike processing.
+    // Deliver spike to target neuron via NetworkPropagator
+    auto propagator = networkPropagator_.lock();
+    if (propagator) {
+        propagator->deliverSpikeToNeuron(
+            targetNeuronId,
+            actionPotential->getScheduledTime(),
+            actionPotential->getAmplitude()
+        );
+    } else {
+        // Fallback: just log if no propagator is set (for backward compatibility)
+        SNNFW_DEBUG("Dendrite {}: No NetworkPropagator set, spike not delivered to neuron {}",
+                   getId(), targetNeuronId);
+    }
 }
 
 std::string Dendrite::toJson() const {
