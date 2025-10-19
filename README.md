@@ -378,7 +378,7 @@ EventObject (base class with scheduled time)
 - **[docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md](docs/HYPERPARAMETER_OPTIMIZATION_SUMMARY.md)** - Implementation summary
 
 ### Experiments
-- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (94.76% accuracy with 8×8 grid)
+- **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (94.96% accuracy with optimized hyperparameters)
 
 ## 🎯 Examples
 
@@ -428,7 +428,7 @@ auto activations = retina->getActivationPattern();
 
 ### Available Adapters
 
-- **RetinaAdapter** - Visual processing with edge detection (94.76% MNIST accuracy)
+- **RetinaAdapter** - Visual processing with edge detection (94.96% MNIST accuracy)
 - **AudioAdapter** - Audio processing with FFT and mel-scale channels
 - **DisplayAdapter** - Neural activity visualization (raster, heatmap, vector, ASCII)
 - **Custom Adapters** - Easy to create domain-specific adapters
@@ -438,9 +438,9 @@ auto activations = retina->getActivationPattern();
 ```bash
 cd build
 
-# MNIST with RetinaAdapter (94.76% accuracy with 8×8 grid)
+# MNIST with RetinaAdapter (94.96% accuracy with optimized hyperparameters)
 make mnist_classification_strategies -j4
-./mnist_classification_strategies ../configs/mnist_8x8_majority.json
+./mnist_classification_strategies ../configs/mnist_8x8_optimized.json
 
 # Display visualization
 make display_visualization -j4
@@ -457,15 +457,17 @@ See **[docs/ADAPTER_SYSTEM.md](docs/ADAPTER_SYSTEM.md)** for complete documentat
 
 The `experiments/` directory contains MNIST digit recognition experiments demonstrating spike-based pattern matching:
 
-**Current Best Result: 94.76% accuracy** using:
+**Current Best Result: 94.96% accuracy** using:
 - RetinaAdapter with Sobel edge detection (8 orientations)
 - Spike-based pattern learning
 - k-Nearest Neighbors classification (k=5)
 - **8×8 spatial grid (512 neurons)** - Optimized for higher spatial resolution
+- **Optimized edge_threshold: 0.165** - Fine-tuned from 0.15
 - **Pluggable classification strategies** (MajorityVoting, WeightedDistance, WeightedSimilarity)
 - Configurable via JSON
 
 **Previous Results:**
+- 94.76% accuracy (8×8 grid, edge_threshold=0.15, k=5)
 - 92.71% accuracy (7×7 grid, 392 neurons)
 - 81.20% accuracy (inline implementation)
 

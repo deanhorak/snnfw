@@ -1,0 +1,61 @@
+[2025-10-18 20:17:01.759] [info] Loaded configuration from: ../results/hyperparam/config_0023.json
+=== MNIST Classification Strategy Comparison ===
+Configuration: ../results/hyperparam/config_0023.json
+Training: 1000 examples per digit
+Testing: 2000 images
+k-NN: k=5
+Strategy: majority
+Distance Exponent: 1
+
+Loading MNIST training data...
+[2025-10-18 20:17:01.759] [info] MNIST Images: 60000 images, 28x28 pixels
+[2025-10-18 20:17:01.820] [info] Successfully loaded 60000 images
+[2025-10-18 20:17:01.820] [info] MNIST Labels: 60000 labels in file
+[2025-10-18 20:17:01.822] [info] Successfully loaded 60000 labels
+Loading MNIST test data...
+[2025-10-18 20:17:01.822] [info] MNIST Images: 10000 images, 28x28 pixels
+[2025-10-18 20:17:01.832] [info] Successfully loaded 10000 images
+[2025-10-18 20:17:01.832] [info] MNIST Labels: 10000 labels in file
+[2025-10-18 20:17:01.832] [info] Successfully loaded 10000 labels
+Creating RetinaAdapter...
+[2025-10-18 20:17:01.832] [info] RetinaAdapter 'retina': grid=8x8, orientations=8, threshold=0.15, edge=sobel, encoding=rate
+[2025-10-18 20:17:01.832] [info] RetinaAdapter 'retina': initialized with 512 neurons
+RetinaAdapter initialized with 512 neurons
+
+Using classification strategy: MajorityVoting
+
+=== Training Phase ===
+Training digit 0...
+[2025-10-18 20:17:01.833] [info] RetinaAdapter 'retina': inferred image size 28x28, region size 3
+Training digit 1...
+Training digit 2...
+Training digit 3...
+Training digit 4...
+Training digit 5...
+Training digit 6...
+Training digit 7...
+Training digit 8...
+Training digit 9...
+Training complete. Stored 10000 patterns.
+Training time: 12.275 seconds
+
+=== Testing Phase ===
+Testing sample 0/2000
+Testing sample 1000/2000
+
+=== Results ===
+Strategy: MajorityVoting
+Overall Accuracy: 89.4% (1788/2000)
+Testing time: 21.031 seconds
+
+Per-digit accuracy:
+  Digit 0: 99.4% (174/175)
+  Digit 1: 99.6% (233/234)
+  Digit 2: 87.2% (191/219)
+  Digit 3: 86.0% (178/207)
+  Digit 4: 76.0% (165/217)
+  Digit 5: 93.3% (167/179)
+  Digit 6: 95.5% (170/178)
+  Digit 7: 83.9% (172/205)
+  Digit 8: 83.9% (161/192)
+  Digit 9: 91.2% (177/194)

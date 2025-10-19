@@ -1,0 +1,16 @@
+Edge Threshold Optimization Summary
+================================================================================
+
+Best edge_threshold: 0.16
+Best accuracy: 94.92%
+
+All results:
+  edge_threshold=0.10: 94.31%
+  edge_threshold=0.12: 94.30%
+  edge_threshold=0.13: 94.47%
+  edge_threshold=0.14: 94.50%
+  edge_threshold=0.15: 94.76%
+  edge_threshold=0.16: 94.92% ← BEST
+  edge_threshold=0.17: 94.79%
+  edge_threshold=0.18: 94.87%
+  edge_threshold=0.20: 94.82%

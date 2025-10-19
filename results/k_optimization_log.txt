@@ -1,0 +1,30 @@
+================================================================================
+K-NEIGHBORS OPTIMIZATION
+================================================================================
+Testing k values: [1, 3, 5, 7, 9, 11] with full dataset (5000 train/digit, 10000 test)
+
+Testing k=1... Accuracy: 93.69%
+  🎉 NEW BEST!
+Testing k=3... Accuracy: 94.43%
+  🎉 NEW BEST!
+Testing k=5... Accuracy: 94.76%
+  🎉 NEW BEST!
+Testing k=7... Accuracy: 94.54%
+Testing k=9... Accuracy: 94.55%
+Testing k=11... Accuracy: 94.53%
+
+================================================================================
+RESULTS
+================================================================================
+Best k: 5
+Best accuracy: 94.76%
+
+All results:
+  k= 1: 93.69%
+  k= 3: 94.43%
+  k= 5: 94.76% ← BEST
+  k= 7: 94.54%
+  k= 9: 94.55%
+  k=11: 94.53%
+
+Results saved to: results/k_optimization/

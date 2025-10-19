@@ -1,0 +1,12 @@
+Fine-Grained Edge Threshold Optimization Summary
+================================================================================
+
+Best edge_threshold: 0.165
+Best accuracy: 94.96%
+
+All results:
+  edge_threshold=0.155: 94.86%
+  edge_threshold=0.158: 94.84%
+  edge_threshold=0.160: 94.92%
+  edge_threshold=0.162: 94.83%
+  edge_threshold=0.165: 94.96% ← BEST

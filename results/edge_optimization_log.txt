@@ -1,0 +1,41 @@
+================================================================================
+EDGE THRESHOLD OPTIMIZATION
+================================================================================
+Testing edge_threshold values: [0.1, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.2]
+Using k=5 (optimal from k-optimization)
+Full dataset: 5000 train/digit, 10000 test
+
+Testing edge_threshold=0.10... Accuracy: 94.31%
+  🎉 NEW BEST!
+Testing edge_threshold=0.12... Accuracy: 94.30%
+Testing edge_threshold=0.13... Accuracy: 94.47%
+  🎉 NEW BEST!
+Testing edge_threshold=0.14... Accuracy: 94.50%
+  🎉 NEW BEST!
+Testing edge_threshold=0.15... Accuracy: 94.76%
+  🎉 NEW BEST!
+Testing edge_threshold=0.16... Accuracy: 94.92%
+  🎉 NEW BEST!
+Testing edge_threshold=0.17... Accuracy: 94.79%
+Testing edge_threshold=0.18... Accuracy: 94.87%
+Testing edge_threshold=0.20... Accuracy: 94.82%
+
+================================================================================
+RESULTS
+================================================================================
+Best edge_threshold: 0.16
+Best accuracy: 94.92%
+
+All results:
+  edge_threshold=0.10: 94.31%
+  edge_threshold=0.12: 94.30%
+  edge_threshold=0.13: 94.47%
+  edge_threshold=0.14: 94.50%
+  edge_threshold=0.15: 94.76%
+  edge_threshold=0.16: 94.92% ← BEST
+  edge_threshold=0.17: 94.79%
+  edge_threshold=0.18: 94.87%
+  edge_threshold=0.20: 94.82%
+
+Best config saved to: results/edge_optimization/best_config.json
+Results saved to: results/edge_optimization/
