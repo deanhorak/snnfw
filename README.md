@@ -379,6 +379,7 @@ EventObject (base class with scheduled time)
 
 ### Experiments
 - **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** - MNIST digit recognition experiments (94.96% accuracy with optimized hyperparameters)
+- **[MNIST_V1_MULTICOLUMN.md](MNIST_V1_MULTICOLUMN.md)** - Multi-column V1 architecture with canonical cortical microcircuits (69.56% accuracy)
 
 ## 🎯 Examples
 
@@ -457,6 +458,8 @@ See **[docs/ADAPTER_SYSTEM.md](docs/ADAPTER_SYSTEM.md)** for complete documentat
 
 The `experiments/` directory contains MNIST digit recognition experiments demonstrating spike-based pattern matching:
 
+### Approach 1: RetinaAdapter with k-NN Classification
+
 **Current Best Result: 94.96% accuracy** using:
 - RetinaAdapter with Sobel edge detection (8 orientations)
 - Spike-based pattern learning
@@ -466,12 +469,21 @@ The `experiments/` directory contains MNIST digit recognition experiments demons
 - **Pluggable classification strategies** (MajorityVoting, WeightedDistance, WeightedSimilarity)
 - Configurable via JSON
 
-**Previous Results:**
-- 94.76% accuracy (8×8 grid, edge_threshold=0.15, k=5)
-- 92.71% accuracy (7×7 grid, 392 neurons)
-- 81.20% accuracy (inline implementation)
-
 See **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** for complete details.
+
+### Approach 2: Multi-Column V1 Architecture with STDP Learning
+
+**Result: 69.56% accuracy** using:
+- **12 cortical columns** with orientation selectivity (0°, 15°, 30°, ..., 165°)
+- **6 layers per column** (canonical cortical microcircuit: L1, L2/3, L4, L5, L6)
+- **3,840 neurons total** with ~195,000 synapses
+- **Gabor filtering** for orientation-selective edge detection (9×9 kernels)
+- **Explicit Axon/Synapse/Dendrite connectivity**
+- **STDP learning** with reward modulation
+- **Population-based classification** (20 neurons per digit)
+- Biologically plausible spiking neural network
+
+See **[MNIST_V1_MULTICOLUMN.md](MNIST_V1_MULTICOLUMN.md)** for complete details.
 
 ### Quick Start
 

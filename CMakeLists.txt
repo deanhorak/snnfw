@@ -133,6 +133,7 @@ endif()
 # Source files for library
 set(LIB_SOURCES
     src/Neuron.cpp
+    src/BinaryPattern.cpp
     src/Cluster.cpp
     src/Logger.cpp
     src/ThreadPool.cpp
@@ -306,6 +307,24 @@ target_include_directories(mnist_v1_hierarchical PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/external/libsonata/include
 )
+
+add_executable(mnist_v1_multicolumn experiments/mnist_v1_multicolumn.cpp)
+target_link_libraries(mnist_v1_multicolumn ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
+target_include_directories(mnist_v1_multicolumn PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external/libsonata/include
+)
+
+add_executable(mnist_orientation_columns experiments/mnist_orientation_columns.cpp)
+target_link_libraries(mnist_orientation_columns ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
+target_include_directories(mnist_orientation_columns PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external/libsonata/include
+)
+
+# Analysis tools
+add_executable(analyze_network_stats tools/analyze_network_stats.cpp)
+target_link_libraries(analyze_network_stats ${PROJECT_NAME})
 
 # Testing (optional)
 option(BUILD_TESTS "Build tests" ON)
