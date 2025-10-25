@@ -10,8 +10,8 @@
     "edge_threshold": 0.165
   },
   "neuron": {
-    "window_size_ms": 150.0,
-    "similarity_threshold": 0.82,
+    "window_size_ms": 100.0,
+    "similarity_threshold": 0.85,
     "max_patterns": 200,
     "similarity_metric": "histogram"
   },
@@ -37,8 +37,8 @@
     "buffer_size": 10000
   },
   "stdp": {
-    "a_plus": 0.015,
-    "a_minus": 0.012,
+    "a_plus": 0.020,
+    "a_minus": 0.015,
     "tau_plus": 20.0,
     "tau_minus": 20.0
   },

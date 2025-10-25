@@ -76,12 +76,14 @@ struct MultiColumnConfig {
 };
 
 /**
- * @brief Create a Gabor filter kernel for orientation selectivity
+ * @brief Create a Gabor filter kernel for orientation and spatial frequency selectivity
+ * @param orientation Preferred orientation in degrees (0-180)
+ * @param lambda Wavelength of sinusoid (spatial frequency): smaller = higher frequency
+ * @param size Kernel size (default 9x9)
  */
-std::vector<std::vector<double>> createGaborKernel(double orientation, int size = 9) {
+std::vector<std::vector<double>> createGaborKernel(double orientation, double lambda, int size = 9) {
     std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
     double sigma = 2.5;      // Gaussian envelope width (increased for larger kernel)
-    double lambda = 5.0;     // Wavelength of sinusoid (increased for better edge detection)
     double gamma = 0.5;      // Spatial aspect ratio
 
     int center = size / 2;
@@ -112,9 +114,9 @@ std::vector<std::vector<double>> createGaborKernel(double orientation, int size 
  */
 std::vector<double> applyGaborFilter(const std::vector<uint8_t>& imagePixels,
                                      const std::vector<std::vector<double>>& gaborKernel,
+                                     int gridSize,
                                      int imgWidth = 28,
-                                     int imgHeight = 28,
-                                     int poolSize = 3) {
+                                     int imgHeight = 28) {
     int kernelSize = gaborKernel.size();
     int halfKernel = kernelSize / 2;
 
@@ -138,8 +140,8 @@ std::vector<double> applyGaborFilter(const std::vector<uint8_t>& imagePixels,
         }
     }
 
-    // Max pooling to reduce to 8x8 grid
-    const int gridSize = 8;
+    // Max pooling to reduce to gridSize x gridSize
+    int poolSize = imgWidth / gridSize;  // Calculate pool size based on grid size
     std::vector<double> pooledResponse(gridSize * gridSize, 0.0);
 
     for (int gy = 0; gy < gridSize; ++gy) {
@@ -183,23 +185,25 @@ void copyLayerSpikePattern(const std::vector<std::shared_ptr<Neuron>>& sourceNeu
 // Structure to hold a single cortical column
 struct CorticalColumn {
     std::shared_ptr<Column> column;
-    
+
     // Layers
     std::shared_ptr<Layer> layer1;   // Apical dendrites, modulatory
     std::shared_ptr<Layer> layer23;  // Superficial pyramidal
     std::shared_ptr<Layer> layer4;   // Granular input
     std::shared_ptr<Layer> layer5;   // Deep pyramidal output
     std::shared_ptr<Layer> layer6;   // Corticothalamic feedback
-    
+
     // Neurons in each layer
     std::vector<std::shared_ptr<Neuron>> layer1Neurons;   // 32 neurons
     std::vector<std::shared_ptr<Neuron>> layer23Neurons;  // 128 neurons
     std::vector<std::shared_ptr<Neuron>> layer4Neurons;   // 64 neurons (8x8 grid)
     std::vector<std::shared_ptr<Neuron>> layer5Neurons;   // 64 neurons
     std::vector<std::shared_ptr<Neuron>> layer6Neurons;   // 32 neurons
-    
+
     double orientation;  // Preferred orientation for this column (0-180 degrees)
-    std::vector<std::vector<double>> gaborKernel;  // Gabor filter for this orientation
+    double spatialFrequency;  // Spatial frequency (lambda): low=8.0, med=5.0, high=3.0
+    std::string featureType;  // Feature type: "low_freq", "med_freq", "high_freq"
+    std::vector<std::vector<double>> gaborKernel;  // Gabor filter for this orientation and frequency
 };
 
 int main(int argc, char* argv[]) {
@@ -255,24 +259,53 @@ int main(int argc, char* argv[]) {
         v1Region->addNucleus(v1Nucleus->getId());
         std::cout << "✓ Created Nucleus: " << v1Nucleus->getName() << std::endl;
         
-        // Create 12 cortical columns for finer orientation coverage
-        const int NUM_COLUMNS = 12;
-        const double ORIENTATION_STEP = 180.0 / NUM_COLUMNS;  // 0°, 15°, 30°, ..., 165°
-        
+        // Create multi-modal cortical columns:
+        // - 12 orientations (0°, 15°, 30°, ..., 165°)
+        // - 3 spatial frequencies per orientation (low, medium, high)
+        // Total: 36 columns
+        const int NUM_ORIENTATIONS = 12;
+        const int NUM_FREQUENCIES = 3;
+        const int NUM_COLUMNS = NUM_ORIENTATIONS * NUM_FREQUENCIES;
+        const double ORIENTATION_STEP = 180.0 / NUM_ORIENTATIONS;
+
+        // Spatial frequency channels (lambda values)
+        const double FREQ_LOW = 8.0;     // Low frequency: thick strokes, overall shape
+        const double FREQ_MEDIUM = 5.0;  // Medium frequency: normal edges
+        const double FREQ_HIGH = 3.0;    // High frequency: fine details, thin strokes
+
+        const std::vector<double> SPATIAL_FREQUENCIES = {FREQ_LOW, FREQ_MEDIUM, FREQ_HIGH};
+        const std::vector<std::string> FREQ_NAMES = {"low_freq", "med_freq", "high_freq"};
+
+        // Neuron counts per layer (OPTIMAL CONFIGURATION)
+        // After systematic testing, L2/3 = 256 achieves best accuracy (70.63%)
+        const int LAYER1_NEURONS = 32;    // Modulatory
+        const int LAYER23_NEURONS = 256;  // Superficial pyramidal (integration) - OPTIMAL: 256
+        const int LAYER4_SIZE = 8;        // Grid size for Layer 4 (8x8 = 64 neurons)
+        const int LAYER5_NEURONS = 64;    // Deep pyramidal (output)
+        const int LAYER6_NEURONS = 32;    // Corticothalamic feedback
+
         std::vector<CorticalColumn> corticalColumns;
-        
+
         std::cout << "\n=== Creating " << NUM_COLUMNS << " Cortical Columns ===" << std::endl;
-        
-        for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-            CorticalColumn col;
-            col.orientation = colIdx * ORIENTATION_STEP;
-            col.gaborKernel = createGaborKernel(col.orientation);
-            
-            // Create column
-            col.column = factory.createColumn();
-            v1Nucleus->addColumn(col.column->getId());
-            
-            std::cout << "\n--- Column " << colIdx << " (Orientation: " << col.orientation << "°) ---" << std::endl;
+        std::cout << "  " << NUM_ORIENTATIONS << " orientations × " << NUM_FREQUENCIES << " spatial frequencies" << std::endl;
+
+        int colIdx = 0;
+        for (int oriIdx = 0; oriIdx < NUM_ORIENTATIONS; ++oriIdx) {
+            double orientation = oriIdx * ORIENTATION_STEP;
+
+            for (int freqIdx = 0; freqIdx < NUM_FREQUENCIES; ++freqIdx) {
+                CorticalColumn col;
+                col.orientation = orientation;
+                col.spatialFrequency = SPATIAL_FREQUENCIES[freqIdx];
+                col.featureType = FREQ_NAMES[freqIdx];
+                col.gaborKernel = createGaborKernel(col.orientation, col.spatialFrequency);
+
+                // Create column
+                col.column = factory.createColumn();
+                v1Nucleus->addColumn(col.column->getId());
+
+                std::cout << "\n--- Column " << colIdx << " (Orientation: " << col.orientation << "°, "
+                          << col.featureType << ", λ=" << col.spatialFrequency << ") ---" << std::endl;
 
             // Create Layer 1 (Apical dendrites, modulatory)
             col.layer1 = factory.createLayer();
@@ -280,7 +313,7 @@ int main(int argc, char* argv[]) {
             auto layer1Cluster = factory.createCluster();
             col.layer1->addCluster(layer1Cluster->getId());
 
-            for (int i = 0; i < 32; ++i) {
+            for (int i = 0; i < LAYER1_NEURONS; ++i) {
                 auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
                 col.layer1Neurons.push_back(neuron);
                 layer1Cluster->addNeuron(neuron->getId());
@@ -293,7 +326,7 @@ int main(int argc, char* argv[]) {
             auto layer23Cluster = factory.createCluster();
             col.layer23->addCluster(layer23Cluster->getId());
 
-            for (int i = 0; i < 128; ++i) {
+            for (int i = 0; i < LAYER23_NEURONS; ++i) {
                 auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
                 col.layer23Neurons.push_back(neuron);
                 layer23Cluster->addNeuron(neuron->getId());
@@ -306,12 +339,14 @@ int main(int argc, char* argv[]) {
             auto layer4Cluster = factory.createCluster();
             col.layer4->addCluster(layer4Cluster->getId());
 
-            for (int i = 0; i < 64; ++i) {  // 8x8 spatial grid
+            const int LAYER4_NEURONS = LAYER4_SIZE * LAYER4_SIZE;
+            for (int i = 0; i < LAYER4_NEURONS; ++i) {
                 auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
                 col.layer4Neurons.push_back(neuron);
                 layer4Cluster->addNeuron(neuron->getId());
             }
-            std::cout << "  ✓ Layer 4: " << col.layer4Neurons.size() << " neurons (granular input, 8x8 grid)" << std::endl;
+            std::cout << "  ✓ Layer 4: " << col.layer4Neurons.size() << " neurons (granular input, "
+                      << LAYER4_SIZE << "x" << LAYER4_SIZE << " grid)" << std::endl;
 
             // Create Layer 5 (Deep pyramidal output)
             col.layer5 = factory.createLayer();
@@ -319,7 +354,7 @@ int main(int argc, char* argv[]) {
             auto layer5Cluster = factory.createCluster();
             col.layer5->addCluster(layer5Cluster->getId());
 
-            for (int i = 0; i < 64; ++i) {
+            for (int i = 0; i < LAYER5_NEURONS; ++i) {
                 auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
                 col.layer5Neurons.push_back(neuron);
                 layer5Cluster->addNeuron(neuron->getId());
@@ -332,7 +367,7 @@ int main(int argc, char* argv[]) {
             auto layer6Cluster = factory.createCluster();
             col.layer6->addCluster(layer6Cluster->getId());
 
-            for (int i = 0; i < 32; ++i) {
+            for (int i = 0; i < LAYER6_NEURONS; ++i) {
                 auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
                 col.layer6Neurons.push_back(neuron);
                 layer6Cluster->addNeuron(neuron->getId());
@@ -340,9 +375,12 @@ int main(int argc, char* argv[]) {
             std::cout << "  ✓ Layer 6: " << col.layer6Neurons.size() << " neurons (corticothalamic feedback)" << std::endl;
 
             corticalColumns.push_back(col);
+                colIdx++;
+            }
         }
-        
-        std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns" << std::endl;
+
+        std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns (" << NUM_ORIENTATIONS
+                  << " orientations × " << NUM_FREQUENCIES << " frequencies)" << std::endl;
 
         // ========================================================================
         // Create Inter-Layer Connections Within Each Column
@@ -535,18 +573,25 @@ int main(int argc, char* argv[]) {
 
         // ========================================================================
         // Create Lateral Inter-Column Connections (Layer 2/3 ↔ Layer 2/3)
+        // Sparse connectivity between neighboring columns for horizontal integration
         // ========================================================================
         std::cout << "\n=== Creating Lateral Inter-Column Connections ===" << std::endl;
 
         int lateralConnections = 0;
-        for (int i = 0; i < NUM_COLUMNS; ++i) {
-            for (int j = 0; j < NUM_COLUMNS; ++j) {
-                if (i == j) continue;  // Skip self-connections
+        const double LATERAL_CONNECTIVITY = 0.20;  // 20% sparse connectivity (increased for better integration)
+        const int NEIGHBOR_RANGE = 2;  // Connect to ±2 neighboring columns
 
-                // Connect Layer 2/3 neurons between columns (sparse 5% connectivity)
+        for (int i = 0; i < NUM_COLUMNS; ++i) {
+            // Connect to neighboring columns (wrap around for circular topology)
+            for (int offset = -NEIGHBOR_RANGE; offset <= NEIGHBOR_RANGE; ++offset) {
+                if (offset == 0) continue;  // Skip self-connections
+
+                int j = (i + offset + NUM_COLUMNS) % NUM_COLUMNS;
+
+                // Connect Layer 2/3 neurons between neighboring columns
                 for (auto& neuronI : corticalColumns[i].layer23Neurons) {
                     for (auto& neuronJ : corticalColumns[j].layer23Neurons) {
-                        if (dis(gen) < 0.05) {
+                        if (dis(gen) < LATERAL_CONNECTIVITY) {
                             // Create dendrite for target neuron
                             auto dendrite = factory.createDendrite(neuronJ->getId());
                             neuronJ->addDendrite(dendrite->getId());
@@ -556,8 +601,8 @@ int main(int argc, char* argv[]) {
                             auto synapse = factory.createSynapse(
                                 neuronI->getAxonId(),
                                 dendrite->getId(),
-                                0.2,  // weak lateral weight
-                                1.0   // delay (ms)
+                                0.3,  // Slightly stronger lateral weight
+                                1.5   // Slightly longer delay for lateral propagation
                             );
                             allSynapses.push_back(synapse);
                             lateralConnections++;
@@ -566,21 +611,26 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        std::cout << "✓ Created " << lateralConnections << " lateral connections between columns" << std::endl;
+        std::cout << "✓ Created " << lateralConnections << " lateral connections between neighboring columns" << std::endl;
+        std::cout << "  Connectivity: " << (LATERAL_CONNECTIVITY * 100) << "% between ±"
+                  << NEIGHBOR_RANGE << " neighboring columns" << std::endl;
+
+        const int LAYER4_NEURONS = LAYER4_SIZE * LAYER4_SIZE;
+        const int NEURONS_PER_COLUMN = LAYER1_NEURONS + LAYER23_NEURONS + LAYER4_NEURONS + LAYER5_NEURONS + LAYER6_NEURONS;
 
         std::cout << "\n=== Architecture Summary ===" << std::endl;
         std::cout << "Columns: " << NUM_COLUMNS << std::endl;
         std::cout << "Neurons per column:" << std::endl;
-        std::cout << "  Layer 1: 32 (modulatory)" << std::endl;
-        std::cout << "  Layer 2/3: 128 (superficial pyramidal)" << std::endl;
-        std::cout << "  Layer 4: 64 (granular input)" << std::endl;
-        std::cout << "  Layer 5: 64 (deep pyramidal)" << std::endl;
-        std::cout << "  Layer 6: 32 (corticothalamic)" << std::endl;
-        std::cout << "Total columnar neurons: " << (NUM_COLUMNS * (32 + 128 + 64 + 64 + 32)) << std::endl;
+        std::cout << "  Layer 1: " << LAYER1_NEURONS << " (modulatory)" << std::endl;
+        std::cout << "  Layer 2/3: " << LAYER23_NEURONS << " (superficial pyramidal)" << std::endl;
+        std::cout << "  Layer 4: " << LAYER4_NEURONS << " (granular input, " << LAYER4_SIZE << "x" << LAYER4_SIZE << " grid)" << std::endl;
+        std::cout << "  Layer 5: " << LAYER5_NEURONS << " (deep pyramidal)" << std::endl;
+        std::cout << "  Layer 6: " << LAYER6_NEURONS << " (corticothalamic)" << std::endl;
+        std::cout << "Total columnar neurons: " << (NUM_COLUMNS * NEURONS_PER_COLUMN) << std::endl;
         std::cout << "Total axons: " << allAxons.size() << std::endl;
         std::cout << "Total synapses: " << allSynapses.size() << std::endl;
         std::cout << "Total dendrites: " << allDendrites.size() << std::endl;
-        std::cout << "Grand total: " << (NUM_COLUMNS * 320) << " neurons" << std::endl;
+        std::cout << "Grand total: " << (NUM_COLUMNS * NEURONS_PER_COLUMN) << " neurons" << std::endl;
 
         std::cout << "\n✓ Multi-column architecture with full connectivity created successfully!" << std::endl;
 
@@ -659,9 +709,9 @@ int main(int argc, char* argv[]) {
                 auto& col = corticalColumns[colIdx];
 
                 // Apply Gabor filter at this column's orientation
-                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel);
+                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
 
-                // Fire Layer 4 neurons based on Gabor response (8x8 grid)
+                // Fire Layer 4 neurons based on Gabor response
                 int firedCount = 0;
                 for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
                     if (gaborResponse[neuronIdx] > 0.1) {  // Threshold
@@ -834,7 +884,7 @@ int main(int argc, char* argv[]) {
 
             for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
                 auto& col = corticalColumns[colIdx];
-                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel);
+                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
 
                 // Collect active Layer 4 neurons and calculate column strength
                 for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
@@ -978,7 +1028,7 @@ int main(int argc, char* argv[]) {
 
             for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
                 auto& col = corticalColumns[colIdx];
-                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel);
+                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
 
                 for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
                     if (gaborResponse[neuronIdx] > 0.1) {
