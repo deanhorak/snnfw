@@ -2,6 +2,7 @@
 #define SNNFW_HYBRID_STRATEGY_H
 
 #include "snnfw/learning/PatternUpdateStrategy.h"
+#include "snnfw/BinaryPattern.h"
 
 namespace snnfw {
 namespace learning {
@@ -113,7 +114,7 @@ public:
     virtual ~HybridStrategy() = default;
 
     /**
-     * @brief Update pattern storage with a new pattern
+     * @brief Update pattern storage with a new pattern (vector<double> version)
      * @param patterns Current stored patterns (may be modified)
      * @param newPattern New pattern to add/merge
      * @param similarityMetric Function to compute similarity between patterns
@@ -135,6 +136,20 @@ public:
         std::vector<std::vector<double>>& patterns,
         const std::vector<double>& newPattern,
         std::function<double(const std::vector<double>&, const std::vector<double>&)> similarityMetric) const override;
+
+    /**
+     * @brief Update pattern storage with a new pattern (BinaryPattern version)
+     * @param patterns Current stored patterns (may be modified)
+     * @param newPattern New pattern to add/merge
+     * @param similarityMetric Function to compute similarity between patterns
+     * @return True if patterns were modified, false otherwise
+     *
+     * Same algorithm as vector<double> version, but optimized for BinaryPattern
+     */
+    bool updatePatterns(
+        std::vector<BinaryPattern>& patterns,
+        const BinaryPattern& newPattern,
+        std::function<double(const BinaryPattern&, const BinaryPattern&)> similarityMetric) const override;
 
     /**
      * @brief Get the strategy name
@@ -180,14 +195,21 @@ public:
 
 private:
     /**
-     * @brief Find the least-used pattern
+     * @brief Find the least-used pattern (vector<double> version)
      * @param patterns Current stored patterns
      * @return Index of least-used pattern, or -1 if empty
      */
     int findLeastUsed(const std::vector<std::vector<double>>& patterns) const;
 
     /**
-     * @brief Merge new pattern into existing pattern
+     * @brief Find the least-used pattern (BinaryPattern version)
+     * @param patterns Current stored patterns
+     * @return Index of least-used pattern, or -1 if empty
+     */
+    int findLeastUsed(const std::vector<BinaryPattern>& patterns) const;
+
+    /**
+     * @brief Merge new pattern into existing pattern (vector<double> version)
      * @param target Target pattern to merge into
      * @param newPattern New pattern to merge
      * @param weight Weight for new pattern (0.0 to 1.0)
@@ -198,7 +220,18 @@ private:
         double weight) const;
 
     /**
-     * @brief Blend new pattern into existing pattern
+     * @brief Merge new pattern into existing pattern (BinaryPattern version)
+     * @param target Target pattern to merge into
+     * @param newPattern New pattern to merge
+     * @param weight Weight for new pattern (0.0 to 1.0)
+     */
+    void mergeIntoPattern(
+        BinaryPattern& target,
+        const BinaryPattern& newPattern,
+        double weight) const;
+
+    /**
+     * @brief Blend new pattern into existing pattern (vector<double> version)
      * @param target Target pattern to blend into
      * @param newPattern New pattern to blend
      * @param alpha Blending factor (0.0 to 1.0)
@@ -206,6 +239,17 @@ private:
     void blendPattern(
         std::vector<double>& target,
         const std::vector<double>& newPattern,
+        double alpha) const;
+
+    /**
+     * @brief Blend new pattern into existing pattern (BinaryPattern version)
+     * @param target Target pattern to blend into
+     * @param newPattern New pattern to blend
+     * @param alpha Blending factor (0.0 to 1.0)
+     */
+    void blendPattern(
+        BinaryPattern& target,
+        const BinaryPattern& newPattern,
         double alpha) const;
 
     // Mutable to allow tracking during const operations

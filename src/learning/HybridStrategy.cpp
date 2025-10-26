@@ -1,4 +1,5 @@
 #include "snnfw/learning/HybridStrategy.h"
+#include "snnfw/BinaryPattern.h"
 #include <algorithm>
 #include <limits>
 #include <cmath>
@@ -209,6 +210,136 @@ HybridStrategy::Statistics HybridStrategy::getStatistics() const {
         totalBlends_,
         totalAdds_
     };
+}
+
+// ============================================================================
+// BinaryPattern version implementations
+// ============================================================================
+
+bool HybridStrategy::updatePatterns(
+    std::vector<BinaryPattern>& patterns,
+    const BinaryPattern& newPattern,
+    std::function<double(const BinaryPattern&, const BinaryPattern&)> similarityMetric) const
+{
+    // Ensure tracking vectors match pattern count
+    if (usageCounts_.size() != patterns.size()) {
+        usageCounts_.resize(patterns.size(), 0);
+    }
+    if (mergeCounts_.size() != patterns.size()) {
+        mergeCounts_.resize(patterns.size(), 0);
+    }
+
+    // Case 1: Below capacity - just add the pattern
+    if (patterns.size() < config_.maxPatterns) {
+        patterns.push_back(newPattern);
+        usageCounts_.push_back(0);
+        mergeCounts_.push_back(0);
+        totalAdds_++;
+        return true;
+    }
+
+    // Case 2: At capacity - find most similar pattern
+    int bestIdx = -1;
+    double bestSim = 0.0;
+
+    if (!patterns.empty()) {
+        bestIdx = 0;
+        bestSim = similarityMetric(patterns[0], newPattern);
+
+        for (size_t i = 1; i < patterns.size(); ++i) {
+            double sim = similarityMetric(patterns[i], newPattern);
+            if (sim > bestSim) {
+                bestSim = sim;
+                bestIdx = static_cast<int>(i);
+            }
+        }
+    }
+
+    if (bestIdx < 0) {
+        // No patterns exist (shouldn't happen, but handle gracefully)
+        patterns.push_back(newPattern);
+        usageCounts_.push_back(0);
+        mergeCounts_.push_back(0);
+        totalAdds_++;
+        return true;
+    }
+
+    // Case 2a: Very high similarity - MERGE into prototype
+    if (bestSim >= mergeThreshold_) {
+        mergeIntoPattern(patterns[bestIdx], newPattern, mergeWeight_);
+        mergeCounts_[bestIdx]++;
+        usageCounts_[bestIdx]++;
+        totalMerges_++;
+        return true;
+    }
+
+    // Case 2b: Medium similarity - BLEND (Hebbian strengthening)
+    if (bestSim >= config_.similarityThreshold) {
+        blendPattern(patterns[bestIdx], newPattern, blendAlpha_);
+        usageCounts_[bestIdx]++;
+        totalBlends_++;
+        return true;
+    }
+
+    // Case 2c: Low similarity - novel pattern, need to PRUNE and replace
+    int leastUsedIdx = findLeastUsed(patterns);
+    if (leastUsedIdx >= 0) {
+        patterns[leastUsedIdx] = newPattern;
+        usageCounts_[leastUsedIdx] = 0;
+        mergeCounts_[leastUsedIdx] = 0;
+        totalPrunes_++;
+        return true;
+    }
+
+    // Fallback: replace random pattern (shouldn't happen)
+    size_t randIdx = rand() % patterns.size();
+    patterns[randIdx] = newPattern;
+    usageCounts_[randIdx] = 0;
+    mergeCounts_[randIdx] = 0;
+    totalPrunes_++;
+    return true;
+}
+
+int HybridStrategy::findLeastUsed(const std::vector<BinaryPattern>& patterns) const {
+    if (patterns.empty()) {
+        return -1;
+    }
+
+    // Ensure tracking vectors are sized correctly
+    if (usageCounts_.size() != patterns.size()) {
+        usageCounts_.resize(patterns.size(), 0);
+    }
+
+    // Find pattern with minimum usage count
+    size_t minUsage = std::numeric_limits<size_t>::max();
+    int minIdx = -1;
+
+    for (size_t i = 0; i < patterns.size(); ++i) {
+        if (usageCounts_[i] < minUsage) {
+            minUsage = usageCounts_[i];
+            minIdx = static_cast<int>(i);
+        }
+    }
+
+    return minIdx;
+}
+
+void HybridStrategy::mergeIntoPattern(
+    BinaryPattern& target,
+    const BinaryPattern& newPattern,
+    double weight) const
+{
+    // Use BinaryPattern's built-in merge method
+    BinaryPattern::merge(target, newPattern, weight);
+}
+
+void HybridStrategy::blendPattern(
+    BinaryPattern& target,
+    const BinaryPattern& newPattern,
+    double alpha) const
+{
+    // Use BinaryPattern's built-in blend method
+    BinaryPattern::blend(target, newPattern, alpha);
 }
 
 } // namespace learning

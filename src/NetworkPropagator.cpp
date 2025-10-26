@@ -1,5 +1,6 @@
 #include "snnfw/NetworkPropagator.h"
 #include "snnfw/ActionPotential.h"
+#include "snnfw/RetrogradeActionPotential.h"
 #include "snnfw/Logger.h"
 #include <algorithm>
 #include <cmath>
@@ -50,7 +51,16 @@ void NetworkPropagator::registerSynapse(const std::shared_ptr<Synapse>& synapse)
 
     std::lock_guard<std::mutex> lock(synapseMutex_);
     synapseRegistry_[synapse->getId()] = synapse;
-    SNNFW_DEBUG("NetworkPropagator: Registered synapse {}", synapse->getId());
+
+    // Build reverse index: dendrite ID -> synapses
+    uint64_t dendriteId = synapse->getDendriteId();
+    dendriteToSynapsesIndex_[dendriteId].push_back(synapse);
+
+    // Also register with SpikeProcessor for retrograde spike delivery
+    spikeProcessor_->registerSynapse(synapse);
+
+    SNNFW_DEBUG("NetworkPropagator: Registered synapse {} targeting dendrite {}",
+                synapse->getId(), dendriteId);
 }
 
 void NetworkPropagator::registerDendrite(const std::shared_ptr<Dendrite>& dendrite) {
@@ -106,9 +116,18 @@ int NetworkPropagator::fireNeuron(uint64_t neuronId, double firingTime) {
         return 0;
     }
 
-    int spikesScheduled = 0;
+    // Get the neuron's temporal signature (unique spike pattern)
+    const auto& temporalSignature = neuron->getTemporalSignature();
+    if (temporalSignature.empty()) {
+        SNNFW_WARN("NetworkPropagator: Neuron {} has no temporal signature", neuronId);
+        return 0;
+    }
 
-    // For each synapse, create and schedule an action potential
+    int spikesScheduled = 0;
+    double minDelay = std::numeric_limits<double>::max();
+    double maxDelay = std::numeric_limits<double>::min();
+
+    // For each synapse, create and schedule multiple action potentials based on temporal signature
     for (uint64_t synapseId : synapseIds) {
         std::shared_ptr<Synapse> synapse;
         {
@@ -121,35 +140,67 @@ int NetworkPropagator::fireNeuron(uint64_t neuronId, double firingTime) {
             synapse = it->second;
         }
 
-        // Create action potential with synaptic delay and weight
-        double arrivalTime = firingTime + synapse->getDelay();
+        double baseDelay = synapse->getDelay();
         double amplitude = synapse->getWeight();
 
-        auto actionPotential = std::make_shared<ActionPotential>(
+        // Schedule one spike for each time offset in the temporal signature
+        for (double timeOffset : temporalSignature) {
+            double totalDelay = baseDelay + timeOffset;
+            double arrivalTime = firingTime + totalDelay;
+
+            // Track delay statistics
+            minDelay = std::min(minDelay, totalDelay);
+            maxDelay = std::max(maxDelay, totalDelay);
+
+            auto actionPotential = std::make_shared<ActionPotential>(
+                synapseId,
+                synapse->getDendriteId(),
+                arrivalTime,
+                amplitude,
+                firingTime  // Set dispatch time to when neuron fired
+            );
+
+            // Schedule for delivery
+            if (spikeProcessor_->scheduleSpike(actionPotential)) {
+                spikesScheduled++;
+                SNNFW_TRACE("NetworkPropagator: Scheduled spike from neuron {} via synapse {} to dendrite {} at time {:.3f}ms (offset: {:.3f}ms, dispatch: {:.3f}ms)",
+                           neuronId, synapseId, synapse->getDendriteId(), arrivalTime, timeOffset, firingTime);
+            } else {
+                SNNFW_WARN("NetworkPropagator: Failed to schedule spike from neuron {} via synapse {}",
+                          neuronId, synapseId);
+            }
+        }
+
+        // Schedule retrograde action potentials for STDP
+        // These travel back to the synapse to update weights based on timing
+        // Use the same delay as forward spikes (retrograde signals also take time to propagate)
+        double retrogradeArrivalTime = firingTime + baseDelay;
+
+        auto retrogradeAP = std::make_shared<RetrogradeActionPotential>(
             synapseId,
-            synapse->getDendriteId(),
-            arrivalTime,
-            amplitude
+            neuronId,
+            retrogradeArrivalTime,
+            firingTime,  // dispatchTime (when the forward spike was sent)
+            firingTime   // lastFiringTime (when this neuron fired)
         );
 
-        // Schedule for delivery
-        if (spikeProcessor_->scheduleSpike(actionPotential)) {
-            spikesScheduled++;
-            SNNFW_TRACE("NetworkPropagator: Scheduled spike from neuron {} via synapse {} to dendrite {} at time {:.3f}ms",
-                       neuronId, synapseId, synapse->getDendriteId(), arrivalTime);
+        if (spikeProcessor_->scheduleRetrogradeSpike(retrogradeAP)) {
+            SNNFW_TRACE("NetworkPropagator: Scheduled retrograde spike from neuron {} to synapse {} at time {:.3f}ms",
+                       neuronId, synapseId, retrogradeArrivalTime);
         } else {
-            SNNFW_WARN("NetworkPropagator: Failed to schedule spike from neuron {} via synapse {}",
+            SNNFW_WARN("NetworkPropagator: Failed to schedule retrograde spike from neuron {} to synapse {}",
                       neuronId, synapseId);
         }
     }
 
-    SNNFW_DEBUG("NetworkPropagator: Neuron {} fired at {:.3f}ms, scheduled {} spikes",
-               neuronId, firingTime, spikesScheduled);
+    SNNFW_DEBUG("NetworkPropagator: Neuron {} fired at {:.3f}ms, scheduled {} spikes across {} synapses (delay range: {:.3f}-{:.3f}ms, temporal spread: {:.1f}ms)",
+               neuronId, firingTime, spikesScheduled, synapseIds.size(), minDelay, maxDelay,
+               temporalSignature.back() - temporalSignature.front());
 
     return spikesScheduled;
 }
 
-bool NetworkPropagator::deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapseId, double spikeTime, double amplitude) {
+bool NetworkPropagator::deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapseId, double spikeTime, double amplitude, double dispatchTime) {
     std::shared_ptr<Neuron> neuron;
     {
         std::lock_guard<std::mutex> lock(neuronMutex_);
@@ -165,11 +216,11 @@ bool NetworkPropagator::deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapse
     // Note: amplitude could be used to modulate the spike, but for now we just insert the spike time
     neuron->insertSpike(spikeTime);
 
-    // Record the incoming spike for STDP
-    neuron->recordIncomingSpike(synapseId, spikeTime);
+    // Record the incoming spike for STDP (with dispatch time)
+    neuron->recordIncomingSpike(synapseId, spikeTime, dispatchTime);
 
-    SNNFW_TRACE("NetworkPropagator: Delivered spike to neuron {} at time {:.3f}ms (amplitude: {:.3f}, synapse: {})",
-               neuronId, spikeTime, amplitude, synapseId);
+    SNNFW_TRACE("NetworkPropagator: Delivered spike to neuron {} at time {:.3f}ms (amplitude: {:.3f}, synapse: {}, dispatch: {:.3f}ms)",
+               neuronId, spikeTime, amplitude, synapseId, dispatchTime);
 
     return true;
 }
@@ -312,6 +363,57 @@ void NetworkPropagator::setSTDPParameters(double aPlus, double aMinus, double ta
 
     SNNFW_INFO("NetworkPropagator: Updated STDP parameters (A+={}, A-={}, τ+={}, τ-={})",
                stdpAPlus_, stdpAMinus_, stdpTauPlus_, stdpTauMinus_);
+}
+
+void NetworkPropagator::applyRewardModulatedSTDP(uint64_t neuronId, double rewardFactor) {
+    // Get the target neuron
+    std::shared_ptr<Neuron> neuron;
+    {
+        std::lock_guard<std::mutex> lock(neuronMutex_);
+        auto it = neuronRegistry_.find(neuronId);
+        if (it == neuronRegistry_.end()) {
+            SNNFW_WARN("NetworkPropagator: Cannot apply reward-modulated STDP - neuron {} not found", neuronId);
+            return;
+        }
+        neuron = it->second;
+    }
+
+    // Find all synapses targeting this neuron's dendrites using reverse index
+    // PERFORMANCE: O(k) where k = number of dendrites, instead of O(n) where n = total synapses
+    std::vector<std::shared_ptr<Synapse>> targetSynapses;
+    {
+        std::lock_guard<std::mutex> lock(synapseMutex_);
+        for (uint64_t dendriteId : neuron->getDendriteIds()) {
+            auto it = dendriteToSynapsesIndex_.find(dendriteId);
+            if (it != dendriteToSynapsesIndex_.end()) {
+                // Append all synapses targeting this dendrite
+                targetSynapses.insert(targetSynapses.end(), it->second.begin(), it->second.end());
+            }
+        }
+    }
+
+    // Apply reward-modulated weight changes
+    int updatedCount = 0;
+    for (const auto& synapse : targetSynapses) {
+        double currentWeight = synapse->getWeight();
+
+        // Reward-modulated learning: strengthen synapses proportional to reward
+        // Positive reward (>1.0) = strengthen, negative reward (<1.0) = weaken
+        double weightChange = stdpAPlus_ * (rewardFactor - 1.0);
+        double newWeight = currentWeight + weightChange;
+
+        // Clamp to [0, 2] range
+        newWeight = std::max(0.0, std::min(2.0, newWeight));
+
+        synapse->setWeight(newWeight);
+        updatedCount++;
+
+        SNNFW_TRACE("NetworkPropagator: Reward-modulated STDP - synapse {} weight: {:.4f} → {:.4f} (reward: {:.2f})",
+                   synapse->getId(), currentWeight, newWeight, rewardFactor);
+    }
+
+    SNNFW_DEBUG("NetworkPropagator: Applied reward-modulated STDP to {} synapses targeting neuron {} (reward: {:.2f})",
+                updatedCount, neuronId, rewardFactor);
 }
 
 } // namespace snnfw

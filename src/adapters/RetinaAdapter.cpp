@@ -335,10 +335,20 @@ std::vector<double> RetinaAdapter::getActivationPattern() const {
     std::vector<double> activations(neurons_.size(), 0.0);
 
     for (size_t i = 0; i < neurons_.size(); ++i) {
-        // Use best similarity as activation (0.0 to 1.0)
-        // Returns -1.0 if no patterns learned, so we clamp to 0.0
-        double similarity = neurons_[i]->getBestSimilarity();
-        activations[i] = (similarity >= 0.0) ? similarity : 0.0;
+        // PERFORMANCE OPTIMIZATION: During training, neurons accumulate patterns
+        // and getBestSimilarity() becomes very expensive (100 pattern comparisons per neuron).
+        // For 1536 neurons × 100 patterns = 153,600 comparisons per image!
+        //
+        // Instead, use a simple spike-based activation:
+        // - If neuron has spikes: activation = 1.0 (binary activation)
+        // - If no spikes: activation = 0.0
+        //
+        // This is appropriate for training where we just need to know which neurons
+        // are active, not their similarity to learned patterns.
+        //
+        // For inference/testing, you may want to use getBestSimilarity() instead.
+
+        activations[i] = neurons_[i]->getSpikes().empty() ? 0.0 : 1.0;
     }
 
     return activations;
@@ -360,18 +370,25 @@ std::shared_ptr<Neuron> RetinaAdapter::getNeuronAt(int row, int col, int orienta
 }
 
 std::vector<double> RetinaAdapter::processImage(const Image& image) {
+    static int callCount = 0;
+    callCount++;
+
     DataSample sample;
     sample.rawData = image.pixels;
     sample.timestamp = 0.0;
-    
+
     // Set image dimensions
     imageRows_ = image.rows;
     imageCols_ = image.cols;
     regionSize_ = imageRows_ / gridSize_;
-    
+
+    if (callCount <= 6) SNNFW_INFO("processImage call #{}: About to call processData()", callCount);
     // Process and get activation pattern
     processData(sample);
-    return getActivationPattern();
+    if (callCount <= 6) SNNFW_INFO("processImage call #{}: processData() done, calling getActivationPattern()", callCount);
+    auto result = getActivationPattern();
+    if (callCount <= 6) SNNFW_INFO("processImage call #{}: getActivationPattern() done", callCount);
+    return result;
 }
 
 } // namespace adapters

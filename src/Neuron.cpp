@@ -9,13 +9,29 @@
 #include <limits>
 #include <cstdlib>
 #include <algorithm>
+#include <random>
 
 using json = nlohmann::json;
 
 namespace snnfw {
 
 Neuron::Neuron(double windowSizeMs, double similarityThreshold, size_t maxReferencePatterns, uint64_t neuronId)
-    : NeuralObject(neuronId), windowSize(windowSizeMs), threshold(similarityThreshold), maxPatterns(maxReferencePatterns), axonId(0) {}
+    : NeuralObject(neuronId),
+      windowSize(windowSizeMs),
+      threshold(similarityThreshold),
+      maxPatterns(maxReferencePatterns),
+      axonId(0),
+      similarityMetric_(SimilarityMetric::COSINE),  // Default to cosine similarity
+      inhibition_(0.0),
+      firingRate_(0.0),
+      targetFiringRate_(5.0),  // Default target: 5 Hz
+      intrinsicExcitability_(1.0),
+      lastFiringTime_(-1000.0),
+      firingCount_(0),
+      firingWindowStart_(0.0) {
+    // Generate unique temporal signature for this neuron
+    generateTemporalSignature();
+}
 
 void Neuron::insertSpike(double spikeTime) {
     spikes.push_back(spikeTime);
@@ -37,36 +53,56 @@ void Neuron::learnCurrentPattern() {
         return;
     }
 
-    // If a pattern update strategy is set, use it
-    if (patternStrategy_) {
-        learning::PatternUpdateStrategy::Config config;
-        config.maxPatterns = maxPatterns;
-        config.similarityThreshold = threshold;
+    // Convert current spike window to BinaryPattern (200 bytes, fixed size)
+    BinaryPattern newPattern(spikes, windowSize);
 
-        // Create similarity metric lambda
-        auto similarityMetric = [](const std::vector<double>& a, const std::vector<double>& b) {
-            return Neuron::cosineSimilarity(a, b);
+    SNNFW_DEBUG("Neuron {}: Converting {} spike times to BinaryPattern ({} total spikes)",
+                getId(), spikes.size(), newPattern.getTotalSpikes());
+
+    // If a pattern update strategy is set, use it directly with BinaryPattern
+    if (patternStrategy_) {
+        // Create similarity metric lambda using the selected metric
+        auto similarityMetric = [this](const BinaryPattern& a, const BinaryPattern& b) {
+            return this->computeSimilarity(a, b);
         };
 
-        patternStrategy_->updatePatterns(referencePatterns, spikes, similarityMetric);
-        SNNFW_DEBUG("Neuron {}: Updated patterns using {} strategy", getId(), patternStrategy_->getName());
+        // Call the BinaryPattern version of updatePatterns (efficient, no conversion!)
+        patternStrategy_->updatePatterns(referencePatterns, newPattern, similarityMetric);
+
+        SNNFW_DEBUG("Neuron {}: Updated patterns using {} strategy ({} patterns stored)",
+                    getId(), patternStrategy_->getName(), referencePatterns.size());
         return;
     }
 
-    // Default behavior (backward compatibility)
+    // Default behavior - work directly with BinaryPattern (MUCH more efficient!)
     if (referencePatterns.size() < maxPatterns) {
-        referencePatterns.push_back(spikes);
-        SNNFW_DEBUG("Neuron {}: Learned new pattern (size={})", getId(), spikes.size());
+        referencePatterns.push_back(newPattern);
+        SNNFW_DEBUG("Neuron {}: Learned new BinaryPattern ({} total spikes, {} patterns stored)",
+                    getId(), newPattern.getTotalSpikes(), referencePatterns.size());
     } else {
-        int bestIndex = findMostSimilarPattern(spikes);
-        if (bestIndex != -1) {
-            blendPattern(referencePatterns[bestIndex], spikes, 0.2);
-            SNNFW_DEBUG("Neuron {}: Blended new pattern into pattern #{}", getId(), bestIndex);
+        // Find most similar pattern using selected similarity metric
+        int bestIndex = -1;
+        double bestSim = -1.0;
+
+        for (size_t i = 0; i < referencePatterns.size(); ++i) {
+            double sim = computeSimilarity(referencePatterns[i], newPattern);
+            if (sim > bestSim) {
+                bestSim = sim;
+                bestIndex = static_cast<int>(i);
+            }
+        }
+
+        if (bestIndex != -1 && bestSim >= threshold) {
+            // Blend new pattern into most similar existing pattern
+            BinaryPattern::blend(referencePatterns[bestIndex], newPattern, 0.2);
+            SNNFW_DEBUG("Neuron {}: Blended new pattern into pattern #{} (similarity={:.3f})",
+                        getId(), bestIndex, bestSim);
         } else {
-            // Optional: replace oldest or least-used pattern instead
+            // Replace random pattern (novel pattern, low similarity to all existing)
             size_t randIndex = rand() % referencePatterns.size();
-            referencePatterns[randIndex] = spikes;
-            SNNFW_DEBUG("Neuron {}: Replaced pattern #{} with new pattern", getId(), randIndex);
+            referencePatterns[randIndex] = newPattern;
+            SNNFW_DEBUG("Neuron {}: Replaced pattern #{} with new pattern (best similarity={:.3f})",
+                        getId(), randIndex, bestSim);
         }
     }
 }
@@ -87,11 +123,7 @@ void Neuron::printSpikes() const {
 void Neuron::printReferencePatterns() const {
     SNNFW_INFO("Neuron {}: Stored reference patterns ({})", getId(), referencePatterns.size());
     for (size_t i = 0; i < referencePatterns.size(); ++i) {
-        std::string patternStr;
-        for (double val : referencePatterns[i]) {
-            patternStr += std::to_string(val) + " ";
-        }
-        SNNFW_INFO("  Pattern #{}: {}", i, patternStr);
+        SNNFW_INFO("  Pattern #{}: {}", i, referencePatterns[i].toString());
     }
 }
 
@@ -182,16 +214,30 @@ double Neuron::histogramSimilarity(const std::vector<double>& cdf1, const std::v
     return 0.3 * cdf_sim + 0.5 * deriv_sim + 0.2 * l1_sim;
 }
 
+double Neuron::computeSimilarity(const BinaryPattern& a, const BinaryPattern& b) const {
+    switch (similarityMetric_) {
+        case SimilarityMetric::COSINE:
+            return BinaryPattern::cosineSimilarity(a, b);
+        case SimilarityMetric::HISTOGRAM:
+            return BinaryPattern::histogramIntersection(a, b);
+        case SimilarityMetric::EUCLIDEAN:
+            return BinaryPattern::euclideanSimilarity(a, b);
+        case SimilarityMetric::CORRELATION:
+            return BinaryPattern::correlationSimilarity(a, b);
+        case SimilarityMetric::WAVEFORM:
+            return BinaryPattern::waveformSimilarity(a, b);
+        default:
+            return BinaryPattern::cosineSimilarity(a, b);
+    }
+}
+
 bool Neuron::shouldFire() const {
-    // Convert current spikes to histogram
-    auto currentHist = spikeToHistogram(spikes);
+    // Convert current spikes to BinaryPattern for comparison
+    BinaryPattern currentPattern(spikes, windowSize);
 
     for (const auto& refPattern : referencePatterns) {
-        // Convert reference pattern to histogram
-        auto refHist = spikeToHistogram(refPattern);
-
-        // Compare histograms (fuzzy matching)
-        double similarity = histogramSimilarity(currentHist, refHist);
+        // Compare using selected similarity metric
+        double similarity = computeSimilarity(currentPattern, refPattern);
         if (similarity >= threshold) {
             return true;
         }
@@ -205,19 +251,18 @@ double Neuron::getBestSimilarity() const {
         return 0.0;
     }
 
+    // Convert current spikes to BinaryPattern
+    BinaryPattern currentPattern(spikes, windowSize);
+
     double bestSim = -1.0;
 
-    // Use spike distance metric (lower distance = higher similarity)
+    // Compare with all reference patterns using selected similarity metric
     for (const auto& refPattern : referencePatterns) {
         // Skip empty reference patterns
-        if (refPattern.empty()) continue;
+        if (refPattern.isEmpty()) continue;
 
-        // Compute spike distance
-        double distance = spikeDistance(spikes, refPattern);
-
-        // Convert distance to similarity: similarity = 1 / (1 + distance)
-        // This gives values in range [0, 1], with 1 being perfect match
-        double similarity = 1.0 / (1.0 + distance);
+        // Compute similarity using selected metric
+        double similarity = computeSimilarity(currentPattern, refPattern);
 
         if (similarity > bestSim) {
             bestSim = similarity;
@@ -227,14 +272,17 @@ double Neuron::getBestSimilarity() const {
 }
 
 int Neuron::findMostSimilarPattern(const std::vector<double>& newPattern) const {
+    // Convert newPattern to BinaryPattern for comparison
+    BinaryPattern newBinaryPattern(newPattern, windowSize);
+
     int bestIndex = -1;
     double bestSim = -1.0;
 
     for (size_t i = 0; i < referencePatterns.size(); ++i) {
         const auto& ref = referencePatterns[i];
-        if (ref.size() != newPattern.size()) continue;
 
-        double sim = cosineSimilarity(ref, newPattern);
+        // Use selected similarity metric
+        double sim = computeSimilarity(ref, newBinaryPattern);
         if (sim > bestSim) {
             bestSim = sim;
             bestIndex = static_cast<int>(i);
@@ -348,7 +396,18 @@ std::string Neuron::toJson() const {
     j["axonId"] = axonId;
     j["dendriteIds"] = dendriteIds;
     j["spikes"] = spikes;
-    j["referencePatterns"] = referencePatterns;
+
+    // Serialize BinaryPatterns as arrays of spike counts
+    json patternsJson = json::array();
+    for (const auto& pattern : referencePatterns) {
+        json patternJson = json::array();
+        for (size_t i = 0; i < BinaryPattern::PATTERN_SIZE; ++i) {
+            patternJson.push_back(pattern[i]);
+        }
+        patternsJson.push_back(patternJson);
+    }
+    j["referencePatterns"] = patternsJson;
+
     return j.dump();
 }
 
@@ -372,7 +431,18 @@ bool Neuron::fromJson(const std::string& jsonStr) {
         axonId = j["axonId"];
         dendriteIds = j["dendriteIds"].get<std::vector<uint64_t>>();
         spikes = j["spikes"].get<std::vector<double>>();
-        referencePatterns = j["referencePatterns"].get<std::vector<std::vector<double>>>();
+
+        // Deserialize BinaryPatterns from arrays of spike counts
+        referencePatterns.clear();
+        if (j.contains("referencePatterns")) {
+            for (const auto& patternJson : j["referencePatterns"]) {
+                BinaryPattern pattern;
+                for (size_t i = 0; i < BinaryPattern::PATTERN_SIZE && i < patternJson.size(); ++i) {
+                    pattern[i] = patternJson[i].get<uint8_t>();
+                }
+                referencePatterns.push_back(pattern);
+            }
+        }
 
         return true;
     } catch (const std::exception& e) {
@@ -381,15 +451,15 @@ bool Neuron::fromJson(const std::string& jsonStr) {
     }
 }
 
-void Neuron::recordIncomingSpike(uint64_t synapseId, double spikeTime) {
+void Neuron::recordIncomingSpike(uint64_t synapseId, double spikeTime, double dispatchTime) {
     // Add the incoming spike to our tracking deque
-    incomingSpikes_.emplace_back(synapseId, spikeTime);
+    incomingSpikes_.emplace_back(synapseId, spikeTime, dispatchTime);
 
     // Clean up old spikes outside the temporal window
     clearOldIncomingSpikes(spikeTime);
 
-    SNNFW_TRACE("Neuron {}: Recorded incoming spike from synapse {} at time {:.3f}ms (total tracked: {})",
-                getId(), synapseId, spikeTime, incomingSpikes_.size());
+    SNNFW_TRACE("Neuron {}: Recorded incoming spike from synapse {} at time {:.3f}ms (dispatch: {:.3f}ms, total tracked: {})",
+                getId(), synapseId, spikeTime, dispatchTime, incomingSpikes_.size());
 }
 
 int Neuron::fireAndAcknowledge(double firingTime) {
@@ -420,6 +490,9 @@ int Neuron::fireAndAcknowledge(double firingTime) {
                     getId(), incomingSpike.synapseId, ack->getTimeDifference());
     }
 
+    // Update firing rate statistics for homeostatic plasticity
+    updateFiringRate(firingTime);
+
     SNNFW_DEBUG("Neuron {}: Fired at {:.3f}ms and sent {} acknowledgments",
                 getId(), firingTime, acknowledgmentCount);
 
@@ -432,6 +505,130 @@ void Neuron::clearOldIncomingSpikes(double currentTime) {
            (currentTime - incomingSpikes_.front().arrivalTime > windowSize)) {
         incomingSpikes_.pop_front();
     }
+}
+
+void Neuron::periodicMemoryCleanup(double currentTime) {
+    // Clear old spikes from the rolling window
+    removeOldSpikes(currentTime);
+
+    // Clear old incoming spikes for STDP
+    clearOldIncomingSpikes(currentTime);
+
+    // Shrink spike containers to fit actual size (release excess capacity)
+    spikes.shrink_to_fit();
+    incomingSpikes_.shrink_to_fit();
+
+    // Shrink pattern storage to fit (BinaryPattern is fixed size, so just shrink the vector)
+    referencePatterns.shrink_to_fit();
+    // Note: Each BinaryPattern is already fixed at 200 bytes, no need to shrink individual patterns
+
+    SNNFW_TRACE("Neuron {}: Memory cleanup - {} spikes, {} incoming spikes, {} patterns ({}KB pattern memory)",
+                getId(), spikes.size(), incomingSpikes_.size(), referencePatterns.size(),
+                (referencePatterns.size() * 200) / 1024);
+}
+
+void Neuron::generateTemporalSignature() {
+    // Use neuron ID as seed for reproducibility
+    std::mt19937 rng(getId());
+
+    // Generate 1-10 spikes
+    std::uniform_int_distribution<int> spikeCountDist(1, 10);
+    int numSpikes = spikeCountDist(rng);
+
+    // Spread spikes over 0-100ms
+    std::uniform_real_distribution<double> timingDist(0.0, 100.0);
+
+    temporalSignature_.clear();
+    temporalSignature_.reserve(numSpikes);
+
+    for (int i = 0; i < numSpikes; ++i) {
+        temporalSignature_.push_back(timingDist(rng));
+    }
+
+    // Sort the offsets for easier processing
+    std::sort(temporalSignature_.begin(), temporalSignature_.end());
+
+    SNNFW_TRACE("Neuron {}: Generated temporal signature with {} spikes over {:.1f}ms",
+                getId(), numSpikes,
+                temporalSignature_.empty() ? 0.0 : (temporalSignature_.back() - temporalSignature_.front()));
+}
+
+void Neuron::fireSignature(double baseTime) {
+    // Insert spikes according to this neuron's unique temporal signature
+    for (double offset : temporalSignature_) {
+        insertSpike(baseTime + offset);
+    }
+
+    SNNFW_TRACE("Neuron {}: Fired signature pattern with {} spikes starting at {:.3f}ms",
+                getId(), temporalSignature_.size(), baseTime);
+}
+
+void Neuron::applyInhibition(double amount) {
+    inhibition_ += amount;
+    SNNFW_TRACE("Neuron {}: Applied inhibition {:.4f}, total inhibition: {:.4f}",
+                getId(), amount, inhibition_);
+}
+
+double Neuron::getActivation() const {
+    double similarity = getBestSimilarity();
+    if (similarity < 0.0) {
+        return 0.0;  // No patterns learned yet
+    }
+    // Activation = (similarity * intrinsic excitability) - inhibition (clamped to [0, 1])
+    double activation = (similarity * intrinsicExcitability_) - inhibition_;
+    return std::max(0.0, std::min(1.0, activation));
+}
+
+void Neuron::updateFiringRate(double currentTime) {
+    const double MEASUREMENT_WINDOW = 1000.0;  // 1 second window in ms
+
+    // Initialize window if needed
+    if (firingWindowStart_ == 0.0) {
+        firingWindowStart_ = currentTime;
+    }
+
+    // Record this firing
+    firingCount_++;
+    lastFiringTime_ = currentTime;
+
+    // Calculate firing rate if we have enough time elapsed
+    double elapsed = currentTime - firingWindowStart_;
+    if (elapsed >= MEASUREMENT_WINDOW) {
+        // Calculate rate in Hz (firings per second)
+        firingRate_ = (firingCount_ / elapsed) * 1000.0;
+
+        // Reset window
+        firingCount_ = 0;
+        firingWindowStart_ = currentTime;
+
+        SNNFW_TRACE("Neuron {}: Firing rate updated to {:.2f} Hz (target: {:.2f} Hz)",
+                    getId(), firingRate_, targetFiringRate_);
+    }
+}
+
+void Neuron::applyHomeostaticPlasticity() {
+    const double LEARNING_RATE = 0.01;  // How quickly to adjust excitability
+    const double MIN_EXCITABILITY = 0.5;
+    const double MAX_EXCITABILITY = 2.0;
+
+    if (firingRate_ == 0.0) {
+        return;  // Not enough data yet
+    }
+
+    // Calculate error: how far are we from target?
+    double error = targetFiringRate_ - firingRate_;
+
+    // Adjust intrinsic excitability based on error
+    // If firing too little (error > 0), increase excitability
+    // If firing too much (error < 0), decrease excitability
+    double adjustment = LEARNING_RATE * error;
+    intrinsicExcitability_ += adjustment;
+
+    // Clamp to reasonable bounds
+    intrinsicExcitability_ = std::max(MIN_EXCITABILITY, std::min(MAX_EXCITABILITY, intrinsicExcitability_));
+
+    SNNFW_DEBUG("Neuron {}: Homeostatic adjustment - firing rate: {:.2f} Hz, target: {:.2f} Hz, excitability: {:.3f}",
+                getId(), firingRate_, targetFiringRate_, intrinsicExcitability_);
 }
 
 } // namespace snnfw

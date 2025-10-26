@@ -2,6 +2,8 @@
 #include "snnfw/Logger.h"
 #include <chrono>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace snnfw {
 
@@ -17,7 +19,11 @@ SpikeProcessor::SpikeProcessor(size_t timeSliceCount, size_t deliveryThreads)
       totalLoopTime(0.0),
       maxLoopTime(0.0),
       loopCount(0),
-      accumulatedDrift(0.0) {
+      accumulatedDrift(0.0),
+      stdpAPlus(0.01),
+      stdpAMinus(0.012),
+      stdpTauPlus(20.0),
+      stdpTauMinus(20.0) {
 
     // Initialize event queue with empty vectors for each time slice
     eventQueue.resize(numTimeSlices);
@@ -74,6 +80,18 @@ void SpikeProcessor::stop() {
         processingThread.join();
     }
     
+    // Join all active delivery threads
+    {
+        std::lock_guard<std::mutex> lock(deliveryThreadsMutex);
+        SNNFW_INFO("SpikeProcessor: Joining {} active delivery threads...", activeDeliveryThreads.size());
+        for (auto& thread : activeDeliveryThreads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+        activeDeliveryThreads.clear();
+    }
+    
     running.store(false);
     
     SNNFW_INFO("SpikeProcessor stopped. Final time: {:.3f}ms", currentTime.load());
@@ -106,23 +124,63 @@ bool SpikeProcessor::scheduleSpike(const std::shared_ptr<ActionPotential>& actio
     return true;
 }
 
+bool SpikeProcessor::scheduleRetrogradeSpike(const std::shared_ptr<RetrogradeActionPotential>& retrogradeAP) {
+    if (!retrogradeAP) {
+        SNNFW_ERROR("SpikeProcessor: Cannot schedule null retrograde action potential");
+        return false;
+    }
+
+    int sliceIndex = getTimeSliceIndex(retrogradeAP->getScheduledTime());
+
+    if (sliceIndex < 0) {
+        SNNFW_WARN("SpikeProcessor: Retrograde spike scheduled for time {:.3f}ms is out of range (current: {:.3f}ms, max: {:.3f}ms)",
+                   retrogradeAP->getScheduledTime(),
+                   currentTime.load(),
+                   currentTime.load() + numTimeSlices * timeStep);
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        eventQueue[sliceIndex].push_back(retrogradeAP);
+    }
+
+    SNNFW_TRACE("SpikeProcessor: Scheduled retrograde spike for time {:.3f}ms (slice {})",
+                retrogradeAP->getScheduledTime(), sliceIndex);
+
+    return true;
+}
+
 void SpikeProcessor::registerDendrite(const std::shared_ptr<Dendrite>& dendrite) {
     if (!dendrite) {
         SNNFW_ERROR("SpikeProcessor: Cannot register null dendrite");
         return;
     }
 
-    std::lock_guard<std::mutex> lock(registryMutex);
+    std::lock_guard<std::mutex> lock(dendriteRegistryMutex);
     dendriteRegistry[dendrite->getId()] = dendrite;
-    
+
     SNNFW_DEBUG("SpikeProcessor: Registered dendrite {} (total: {})",
                 dendrite->getId(), dendriteRegistry.size());
 }
 
+void SpikeProcessor::registerSynapse(const std::shared_ptr<Synapse>& synapse) {
+    if (!synapse) {
+        SNNFW_ERROR("SpikeProcessor: Cannot register null synapse");
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(synapseRegistryMutex);
+    synapseRegistry[synapse->getId()] = synapse;
+
+    SNNFW_DEBUG("SpikeProcessor: Registered synapse {} (total: {})",
+                synapse->getId(), synapseRegistry.size());
+}
+
 void SpikeProcessor::unregisterDendrite(uint64_t dendriteId) {
-    std::lock_guard<std::mutex> lock(registryMutex);
+    std::lock_guard<std::mutex> lock(dendriteRegistryMutex);
     auto it = dendriteRegistry.find(dendriteId);
-    
+
     if (it != dendriteRegistry.end()) {
         dendriteRegistry.erase(it);
         SNNFW_DEBUG("SpikeProcessor: Unregistered dendrite {} (remaining: {})",
@@ -183,8 +241,11 @@ void SpikeProcessor::processingLoop() {
     while (!stopRequested.load()) {
         auto iterationStart = std::chrono::steady_clock::now();
 
-        // Deliver spikes for current time slice
-        deliverCurrentSlice();
+        // Cleanup completed delivery threads
+        cleanupCompletedThreads();
+
+        // Kick off async delivery for current time slice (non-blocking)
+        deliverSliceAsync(currentSliceIndex, currentTime.load());
 
         // Advance time (atomic double doesn't have fetch_add in C++17, so we use store)
         double newTime = currentTime.load() + timeStep;
@@ -231,8 +292,9 @@ void SpikeProcessor::processingLoop() {
                 std::this_thread::sleep_for(sleepDuration);
             } else if (driftMs > 10.0) {
                 // We're falling behind by more than 10ms - log a warning
-                SNNFW_WARN("SpikeProcessor: Falling behind real-time by {:.2f}ms at simulation time {:.1f}ms",
-                          driftMs, currentTime.load());
+                size_t activeThreads = getActiveDeliveryThreadCount();
+                SNNFW_WARN("SpikeProcessor: Falling behind real-time by {:.2f}ms at simulation time {:.1f}ms ({} active delivery threads)",
+                          driftMs, currentTime.load(), activeThreads);
             }
 
             // Log timing info periodically (every 1000 iterations = 1 second of sim time)
@@ -260,67 +322,142 @@ void SpikeProcessor::processingLoop() {
                avgLoopTime, maxLoop, drift);
 }
 
-void SpikeProcessor::deliverCurrentSlice() {
-    std::vector<std::shared_ptr<ActionPotential>> spikesToDeliver;
-
-    // Extract spikes for current time slice
+void SpikeProcessor::deliverSliceAsync(size_t sliceIndex, double simTime) {
+    // Extract events for this time slice
+    std::vector<std::shared_ptr<EventObject>> eventsToDeliver;
     {
         std::lock_guard<std::mutex> lock(queueMutex);
-        spikesToDeliver = std::move(eventQueue[currentSliceIndex]);
-        eventQueue[currentSliceIndex].clear();
+        eventsToDeliver = std::move(eventQueue[sliceIndex]);
+        eventQueue[sliceIndex].clear();
     }
 
-    if (spikesToDeliver.empty()) {
+    if (eventsToDeliver.empty()) {
         return;
     }
 
-    SNNFW_TRACE("SpikeProcessor: Delivering {} spikes at time {:.3f}ms",
-                spikesToDeliver.size(), currentTime.load());
+    SNNFW_TRACE("SpikeProcessor: Async delivering {} events at time {:.3f}ms",
+                eventsToDeliver.size(), simTime);
 
-    // Divide spikes evenly among threads
-    size_t spikesPerThread = (spikesToDeliver.size() + numDeliveryThreads - 1) / numDeliveryThreads;
+    // Spawn a new thread to handle this timeslice's delivery
+    // This thread will further divide work among the thread pool
+    std::thread deliveryThread([this, eventsToDeliver = std::move(eventsToDeliver), simTime]() {
+        // Divide events evenly among thread pool workers
+        size_t eventsPerThread = (eventsToDeliver.size() + numDeliveryThreads - 1) / numDeliveryThreads;
 
-    std::vector<std::future<void>> deliveryTasks;
+        std::vector<std::future<void>> deliveryTasks;
 
-    for (size_t threadIdx = 0; threadIdx < numDeliveryThreads; ++threadIdx) {
-        size_t startIdx = threadIdx * spikesPerThread;
-        size_t endIdx = std::min(startIdx + spikesPerThread, spikesToDeliver.size());
+        for (size_t threadIdx = 0; threadIdx < numDeliveryThreads; ++threadIdx) {
+            size_t startIdx = threadIdx * eventsPerThread;
+            size_t endIdx = std::min(startIdx + eventsPerThread, eventsToDeliver.size());
 
-        if (startIdx >= spikesToDeliver.size()) {
-            break;
-        }
+            if (startIdx >= eventsToDeliver.size()) {
+                break;
+            }
 
-        // Submit delivery task to thread pool
-        deliveryTasks.emplace_back(
-            threadPool->enqueue([this, &spikesToDeliver, startIdx, endIdx]() {
-                for (size_t i = startIdx; i < endIdx; ++i) {
-                    const auto& spike = spikesToDeliver[i];
+            // Submit delivery task to thread pool
+            deliveryTasks.emplace_back(
+                threadPool->enqueue([this, &eventsToDeliver, startIdx, endIdx]() {
+                    for (size_t i = startIdx; i < endIdx; ++i) {
+                        const auto& event = eventsToDeliver[i];
 
-                    // Find the target dendrite
-                    std::shared_ptr<Dendrite> dendrite;
-                    {
-                        std::lock_guard<std::mutex> lock(registryMutex);
-                        auto it = dendriteRegistry.find(spike->getDendriteId());
-                        if (it != dendriteRegistry.end()) {
-                            dendrite = it->second;
+                        // Check event type and deliver accordingly
+                        const char* eventType = event->getEventType();
+
+                        if (strcmp(eventType, "ActionPotential") == 0) {
+                            // Forward spike - deliver to dendrite
+                            auto spike = std::static_pointer_cast<ActionPotential>(event);
+
+                            std::shared_ptr<Dendrite> dendrite;
+                            {
+                                std::lock_guard<std::mutex> lock(dendriteRegistryMutex);
+                                auto it = dendriteRegistry.find(spike->getDendriteId());
+                                if (it != dendriteRegistry.end()) {
+                                    dendrite = it->second;
+                                }
+                            }
+
+                            if (dendrite) {
+                                dendrite->receiveSpike(spike);
+                            } else {
+                                SNNFW_WARN("SpikeProcessor: Dendrite {} not found for spike delivery",
+                                           spike->getDendriteId());
+                            }
+                        }
+                        else if (strcmp(eventType, "RetrogradeActionPotential") == 0) {
+                            // Retrograde spike - deliver to synapse for STDP
+                            auto retrogradeSpike = std::static_pointer_cast<RetrogradeActionPotential>(event);
+
+                            std::shared_ptr<Synapse> synapse;
+                            {
+                                std::lock_guard<std::mutex> lock(synapseRegistryMutex);
+                                auto it = synapseRegistry.find(retrogradeSpike->getSynapseId());
+                                if (it != synapseRegistry.end()) {
+                                    synapse = it->second;
+                                }
+                            }
+
+                            if (synapse) {
+                                // Apply STDP based on temporal offset
+                                double temporalOffset = retrogradeSpike->getTemporalOffset();
+                                applySTDPToSynapse(synapse, temporalOffset);
+                            } else {
+                                SNNFW_WARN("SpikeProcessor: Synapse {} not found for retrograde spike delivery",
+                                           retrogradeSpike->getSynapseId());
+                            }
+                        }
+                        else {
+                            SNNFW_WARN("SpikeProcessor: Unknown event type: {}", eventType);
                         }
                     }
+                })
+            );
+        }
 
-                    if (dendrite) {
-                        dendrite->receiveSpike(spike);
-                    } else {
-                        SNNFW_WARN("SpikeProcessor: Dendrite {} not found for spike delivery",
-                                   spike->getDendriteId());
-                    }
-                }
-            })
-        );
-    }
+        // Wait for all delivery tasks to complete
+        for (auto& task : deliveryTasks) {
+            task.get();
+        }
 
-    // Wait for all delivery tasks to complete
-    for (auto& task : deliveryTasks) {
-        task.get();
+        SNNFW_TRACE("SpikeProcessor: Completed async delivery for time {:.3f}ms", simTime);
+    });
+
+    // Add to active threads list
+    {
+        std::lock_guard<std::mutex> lock(deliveryThreadsMutex);
+        activeDeliveryThreads.push_back(std::move(deliveryThread));
     }
+}
+
+void SpikeProcessor::cleanupCompletedThreads() {
+    std::lock_guard<std::mutex> lock(deliveryThreadsMutex);
+    
+    // Join and remove completed threads
+    auto it = activeDeliveryThreads.begin();
+    while (it != activeDeliveryThreads.end()) {
+        if (it->joinable()) {
+            // Try to join with zero timeout (non-blocking check)
+            // Since C++ doesn't have try_join, we'll just keep accumulating
+            // and clean them up periodically or on shutdown
+            ++it;
+        } else {
+            it = activeDeliveryThreads.erase(it);
+        }
+    }
+    
+    // Limit the number of threads we keep around
+    // Join older threads if we have too many
+    const size_t MAX_THREADS = 100;
+    while (activeDeliveryThreads.size() > MAX_THREADS && !activeDeliveryThreads.empty()) {
+        if (activeDeliveryThreads.front().joinable()) {
+            activeDeliveryThreads.front().join();
+        }
+        activeDeliveryThreads.pop_front();
+    }
+}
+
+size_t SpikeProcessor::getActiveDeliveryThreadCount() const {
+    std::lock_guard<std::mutex> lock(deliveryThreadsMutex);
+    return activeDeliveryThreads.size();
 }
 
 void SpikeProcessor::getTimingStats(double& avgLoopTime, double& maxLoop, double& driftMs) const {
@@ -334,6 +471,50 @@ void SpikeProcessor::getTimingStats(double& avgLoopTime, double& maxLoop, double
 
     maxLoop = maxLoopTime;
     driftMs = accumulatedDrift;
+}
+
+void SpikeProcessor::setSTDPParameters(double aPlus, double aMinus, double tauPlus, double tauMinus) {
+    stdpAPlus = aPlus;
+    stdpAMinus = aMinus;
+    stdpTauPlus = tauPlus;
+    stdpTauMinus = tauMinus;
+
+    SNNFW_INFO("SpikeProcessor: Updated STDP parameters (A+={}, A-={}, τ+={}, τ-={})",
+               stdpAPlus, stdpAMinus, stdpTauPlus, stdpTauMinus);
+}
+
+void SpikeProcessor::applySTDPToSynapse(std::shared_ptr<Synapse> synapse, double temporalOffset) {
+    if (!synapse) {
+        return;
+    }
+
+    // Classic STDP learning rule:
+    // temporalOffset = lastFiringTime - dispatchTime
+    // If temporalOffset >= 0: neuron fired AFTER spike was sent → LTP (strengthen)
+    // If temporalOffset < 0: neuron fired BEFORE spike was sent → LTD (weaken)
+
+    double weightChange = 0.0;
+
+    if (temporalOffset >= 0) {
+        // LTP: strengthen synapse (post-synaptic neuron fired after spike arrived)
+        weightChange = stdpAPlus * std::exp(-temporalOffset / stdpTauPlus);
+    } else {
+        // LTD: weaken synapse (post-synaptic neuron fired before spike arrived)
+        weightChange = -stdpAMinus * std::exp(temporalOffset / stdpTauMinus);
+    }
+
+    if (weightChange != 0.0) {
+        double oldWeight = synapse->getWeight();
+        double newWeight = oldWeight + weightChange;
+
+        // Clamp weight to [0, 2] range to prevent runaway growth/decay
+        newWeight = std::max(0.0, std::min(2.0, newWeight));
+
+        synapse->setWeight(newWeight);
+
+        SNNFW_TRACE("SpikeProcessor: STDP update for synapse {}: temporalOffset={:.3f}ms, Δw={:.6f}, weight: {:.4f} → {:.4f}",
+                   synapse->getId(), temporalOffset, weightChange, oldWeight, newWeight);
+    }
 }
 
 } // namespace snnfw

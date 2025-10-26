@@ -194,8 +194,8 @@ TEST(STDPTest, ExponentialDecay) {
 // ============================================================================
 
 TEST(IntegrationTest, SingleSynapseSpikePropagation) {
-    // Create spike processor and network propagator with 20ms buffer
-    auto spikeProcessor = std::make_shared<SpikeProcessor>(20);
+    // Create spike processor and network propagator with 200ms buffer (to accommodate temporal signatures)
+    auto spikeProcessor = std::make_shared<SpikeProcessor>(200);
     auto propagator = std::make_shared<NetworkPropagator>(spikeProcessor);
 
     // Create neural objects using factory
@@ -259,7 +259,7 @@ TEST(IntegrationTest, SingleSynapseSpikePropagation) {
 // ============================================================================
 
 TEST(IntegrationTest, STDPLearning) {
-    auto spikeProcessor = std::make_shared<SpikeProcessor>(100);  // 100ms buffer
+    auto spikeProcessor = std::make_shared<SpikeProcessor>(200);  // 200ms buffer (to accommodate temporal signatures)
     auto propagator = std::make_shared<NetworkPropagator>(spikeProcessor);
     propagator->setSTDPParameters(0.05, 0.05, 20.0, 20.0);
 
@@ -290,15 +290,39 @@ TEST(IntegrationTest, STDPLearning) {
 
     double initialWeight = synapse->getWeight();
 
-    // Test LTP: pre fires, then post fires
+    // Get temporal signature to calculate proper timing
+    const auto& signature = preNeuron->getTemporalSignature();
+    double firstSpikeOffset = signature.empty() ? 0.0 : signature.front();
+    double lastSpikeOffset = signature.empty() ? 0.0 : signature.back();
+
+    std::cout << "DEBUG: Presynaptic neuron temporal signature (" << signature.size() << " spikes): ";
+    for (double offset : signature) {
+        std::cout << offset << "ms ";
+    }
+    std::cout << std::endl;
+
+    // Test LTP: pre fires, then post fires AFTER all presynaptic spikes arrive
     double currentTime = spikeProcessor->getCurrentTime();
-    propagator->fireNeuron(preNeuron->getId(), currentTime + 5.0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    double preFiringTime = currentTime + 5.0;
+    double synapticDelay = 1.0;  // From synapse creation
+    double firstSpikeArrival = preFiringTime + synapticDelay + firstSpikeOffset;
+    double lastSpikeArrival = preFiringTime + synapticDelay + lastSpikeOffset;
+    double postFiringTime = lastSpikeArrival + 10.0;  // Fire 10ms after last presynaptic spike arrives
 
-    postNeuron->fireAndAcknowledge(currentTime + 15.0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::cout << "DEBUG: Current time: " << currentTime << "ms" << std::endl;
+    std::cout << "DEBUG: Pre fires at: " << preFiringTime << "ms" << std::endl;
+    std::cout << "DEBUG: First spike arrives at: " << firstSpikeArrival << "ms" << std::endl;
+    std::cout << "DEBUG: Last spike arrives at: " << lastSpikeArrival << "ms" << std::endl;
+    std::cout << "DEBUG: Post fires at: " << postFiringTime << "ms" << std::endl;
 
-    // Weight should have increased
+    propagator->fireNeuron(preNeuron->getId(), preFiringTime);
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(lastSpikeArrival - currentTime + 20)));
+
+    postNeuron->fireAndAcknowledge(postFiringTime);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));  // Wait for STDP processing
+
+    // Weight should have increased (all presynaptic spikes arrived before postsynaptic firing)
+    std::cout << "DEBUG: Initial weight: " << initialWeight << ", Final weight: " << synapse->getWeight() << std::endl;
     EXPECT_GT(synapse->getWeight(), initialWeight);
 
     spikeProcessor->stop();

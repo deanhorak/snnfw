@@ -3,9 +3,7 @@
 
 #include "snnfw/EventObject.h"
 #include "snnfw/ActionPotential.h"
-#include "snnfw/RetrogradeActionPotential.h"
 #include "snnfw/Dendrite.h"
-#include "snnfw/Synapse.h"
 #include "snnfw/ThreadPool.h"
 #include <vector>
 #include <memory>
@@ -13,7 +11,6 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
-#include <deque>
 #include <map>
 
 namespace snnfw {
@@ -28,18 +25,15 @@ namespace snnfw {
  *
  * Key Features:
  * - Time-sliced event queue (default: 10,000 x 1ms = 10 seconds of buffering)
- * - Asynchronous parallel spike delivery using thread pool
+ * - Parallel spike delivery using thread pool
  * - Even workload distribution across worker threads
  * - Thread-safe spike scheduling and delivery
  * - Configurable number of delivery threads
- * - Non-blocking time advancement for real-time synchronization
- * - Non-blocking time advancement for real-time synchronization
  *
  * Architecture:
  * - Outer vector: Time slices (each representing 1ms)
  * - Inner vectors: Action potentials scheduled for that time slice
- * - Background thread: Advances simulation time at steady 1ms intervals
- * - Async delivery threads: Process each timeslice independently
+ * - Background thread: Advances simulation time and triggers deliveries
  * - Thread pool: Distributes spike delivery across multiple threads
  *
  * Biological Motivation:
@@ -94,23 +88,10 @@ public:
     bool scheduleSpike(const std::shared_ptr<ActionPotential>& actionPotential);
 
     /**
-     * @brief Schedule a retrograde action potential for delivery
-     * @param retrogradeAP The retrograde action potential to schedule
-     * @return true if scheduled successfully, false if time is out of range
-     */
-    bool scheduleRetrogradeSpike(const std::shared_ptr<RetrogradeActionPotential>& retrogradeAP);
-
-    /**
      * @brief Register a dendrite for spike delivery
      * @param dendrite Shared pointer to the dendrite
      */
     void registerDendrite(const std::shared_ptr<Dendrite>& dendrite);
-
-    /**
-     * @brief Register a synapse for retrograde spike delivery
-     * @param synapse Shared pointer to the synapse
-     */
-    void registerSynapse(const std::shared_ptr<Synapse>& synapse);
 
     /**
      * @brief Unregister a dendrite
@@ -169,21 +150,6 @@ public:
      */
     void getTimingStats(double& avgLoopTime, double& maxLoopTime, double& driftMs) const;
 
-    /**
-     * @brief Set STDP learning parameters
-     * @param aPlus LTP amplitude (default: 0.01)
-     * @param aMinus LTD amplitude (default: 0.012)
-     * @param tauPlus LTP time constant in ms (default: 20.0)
-     * @param tauMinus LTD time constant in ms (default: 20.0)
-     */
-    void setSTDPParameters(double aPlus, double aMinus, double tauPlus, double tauMinus);
-
-    /**
-     * @brief Get the number of active delivery threads
-     * @return Number of threads currently processing timeslices
-     */
-    size_t getActiveDeliveryThreadCount() const;
-
 private:
     /**
      * @brief Main processing loop (runs in background thread)
@@ -191,23 +157,9 @@ private:
     void processingLoop();
 
     /**
-     * @brief Deliver all spikes for a specific time slice (runs asynchronously)
-     * @param sliceIndex The time slice index to deliver
-     * @param simTime The simulation time for this slice
+     * @brief Deliver all spikes for the current time slice
      */
-    void deliverSliceAsync(size_t sliceIndex, double simTime);
-
-    /**
-     * @brief Apply STDP weight update to a synapse
-     * @param synapse The synapse to update
-     * @param temporalOffset Time difference (lastFiringTime - dispatchTime)
-     */
-    void applySTDPToSynapse(std::shared_ptr<Synapse> synapse, double temporalOffset);
-
-    /**
-     * @brief Cleanup completed delivery threads
-     */
-    void cleanupCompletedThreads();
+    void deliverCurrentSlice();
 
     /**
      * @brief Get the time slice index for a given time
@@ -222,24 +174,15 @@ private:
     double timeStep;                ///< Time step in milliseconds (default: 1.0)
 
     // Event queue: outer vector = time slices, inner vector = events in that slice
-    // Events can be either ActionPotential or RetrogradeActionPotential
-    std::vector<std::vector<std::shared_ptr<EventObject>>> eventQueue;
+    std::vector<std::vector<std::shared_ptr<ActionPotential>>> eventQueue;
     mutable std::mutex queueMutex;  ///< Protects the event queue
 
     // Dendrite registry: maps dendrite ID to dendrite object
     std::map<uint64_t, std::shared_ptr<Dendrite>> dendriteRegistry;
-    mutable std::mutex dendriteRegistryMutex;  ///< Protects the dendrite registry
-
-    // Synapse registry: maps synapse ID to synapse object
-    std::map<uint64_t, std::shared_ptr<Synapse>> synapseRegistry;
-    mutable std::mutex synapseRegistryMutex;  ///< Protects the synapse registry
+    mutable std::mutex registryMutex;  ///< Protects the dendrite registry
 
     // Thread pool for parallel spike delivery
     std::unique_ptr<ThreadPool> threadPool;
-
-    // Async delivery threads management
-    std::deque<std::thread> activeDeliveryThreads;  ///< Active timeslice delivery threads
-    mutable std::mutex deliveryThreadsMutex;        ///< Protects activeDeliveryThreads
 
     // Background processing thread
     std::thread processingThread;
@@ -262,12 +205,6 @@ private:
     double maxLoopTime;              ///< Maximum loop time (microseconds)
     uint64_t loopCount;              ///< Number of loops executed
     double accumulatedDrift;         ///< Accumulated time drift (milliseconds)
-
-    // STDP learning parameters
-    double stdpAPlus;                ///< LTP amplitude (default: 0.01)
-    double stdpAMinus;               ///< LTD amplitude (default: 0.012)
-    double stdpTauPlus;              ///< LTP time constant in ms (default: 20.0)
-    double stdpTauMinus;             ///< LTD time constant in ms (default: 20.0)
 };
 
 } // namespace snnfw

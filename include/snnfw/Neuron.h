@@ -2,6 +2,7 @@
 #define SNNFW_NEURON_H
 
 #include "snnfw/NeuralObject.h"
+#include "snnfw/BinaryPattern.h"
 #include <vector>
 #include <cstddef>
 #include <memory>
@@ -16,26 +17,38 @@ namespace learning {
 class NetworkPropagator;
 
 /**
+ * @brief Similarity metric types for pattern matching
+ */
+enum class SimilarityMetric {
+    COSINE,              ///< Cosine similarity (default, current behavior)
+    HISTOGRAM,           ///< Histogram intersection (Jaccard-like)
+    EUCLIDEAN,           ///< Euclidean distance converted to similarity
+    CORRELATION,         ///< Pearson correlation
+    WAVEFORM             ///< Cross-correlation of Gaussian-smoothed waveforms (temporal shape)
+};
+
+/**
  * @brief Neuron class for spiking neural network with temporal pattern learning
  *
  * This class implements a biologically-inspired neuron that learns temporal spike patterns
  * rather than using traditional weight-based learning. Key features:
  *
  * Pattern Learning:
- * - Stores temporal spike patterns (sequences of spike times)
+ * - Stores temporal spike patterns using fixed-size BinaryPattern (200 bytes each)
  * - Up to maxReferencePatterns patterns per neuron (default: 20, MNIST uses 100)
  * - When capacity is reached, new patterns are blended into most similar existing pattern
  * - Uses cosine similarity for pattern matching
+ * - Memory: 200 bytes per pattern (vs ~800 bytes for vector<double>)
  *
  * Spike Processing:
- * - Rolling time window maintains recent spikes
+ * - Rolling time window maintains recent spikes (vector<double>)
  * - Spikes outside the window are automatically removed
- * - Pattern learning via learnCurrentPattern() stores current spike window
+ * - Pattern learning via learnCurrentPattern() converts spikes to BinaryPattern
  *
  * Similarity Metrics:
- * - Cosine similarity for vector-based pattern matching
- * - Victor-Purpura spike distance for temporal pattern comparison
- * - Histogram-based fuzzy matching for spike train comparison
+ * - Cosine similarity for binary pattern matching (drop-in replacement)
+ * - Histogram intersection for spike count overlap
+ * - Euclidean and correlation metrics also available
  *
  * Connectivity:
  * - One axon (output terminal) - stored as axonId
@@ -76,6 +89,18 @@ public:
     void setPatternUpdateStrategy(std::shared_ptr<learning::PatternUpdateStrategy> strategy);
 
     /**
+     * @brief Set the similarity metric for pattern matching
+     * @param metric Similarity metric to use (COSINE, HISTOGRAM, EUCLIDEAN, CORRELATION)
+     */
+    void setSimilarityMetric(SimilarityMetric metric) { similarityMetric_ = metric; }
+
+    /**
+     * @brief Get the current similarity metric
+     * @return Current similarity metric
+     */
+    SimilarityMetric getSimilarityMetric() const { return similarityMetric_; }
+
+    /**
      * @brief Print current rolling window of spikes
      */
     void printSpikes() const;
@@ -104,10 +129,10 @@ public:
     size_t getLearnedPatternCount() const { return referencePatterns.size(); }
 
     /**
-     * @brief Get all learned patterns
-     * @return Const reference to vector of learned patterns
+     * @brief Get all learned patterns (as BinaryPattern)
+     * @return Const reference to vector of learned BinaryPatterns
      */
-    const std::vector<std::vector<double>>& getLearnedPatterns() const { return referencePatterns; }
+    const std::vector<BinaryPattern>& getLearnedPatterns() const { return referencePatterns; }
 
     /**
      * @brief Get all spikes from the rolling window
@@ -146,16 +171,29 @@ public:
     bool removeDendrite(uint64_t dendriteId);
 
     /**
-     * @brief Get all reference patterns learned by this neuron
-     * @return Const reference to vector of reference patterns
+     * @brief Get all reference patterns learned by this neuron (as BinaryPattern)
+     * @return Const reference to vector of reference BinaryPatterns
      */
-    const std::vector<std::vector<double>>& getReferencePatterns() const { return referencePatterns; }
+    const std::vector<BinaryPattern>& getReferencePatterns() const { return referencePatterns; }
 
     /**
      * @brief Get all dendrite IDs for this neuron
      * @return Const reference to vector of dendrite IDs
      */
     const std::vector<uint64_t>& getDendriteIds() const { return dendriteIds; }
+
+    /**
+     * @brief Get the temporal signature (spike timing offsets) for this neuron
+     * @return Vector of time offsets in milliseconds
+     */
+    const std::vector<double>& getTemporalSignature() const { return temporalSignature_; }
+
+    /**
+     * @brief Fire this neuron's intrinsic temporal signature pattern
+     * Inserts spikes according to the neuron's unique temporal signature
+     * @param baseTime Base time for the spike pattern (signature offsets are added to this)
+     */
+    void fireSignature(double baseTime);
 
     /**
      * @brief Get the number of dendrites
@@ -167,8 +205,56 @@ public:
      * @brief Record an incoming spike from a synapse (for STDP)
      * @param synapseId ID of the synapse that delivered the spike
      * @param spikeTime Time when the spike arrived
+     * @param dispatchTime Time when the spike was originally dispatched
      */
-    void recordIncomingSpike(uint64_t synapseId, double spikeTime);
+    void recordIncomingSpike(uint64_t synapseId, double spikeTime, double dispatchTime = 0.0);
+
+    /**
+     * @brief Apply inhibition to this neuron
+     * @param amount Amount of inhibition to apply (reduces activation)
+     */
+    void applyInhibition(double amount);
+
+    /**
+     * @brief Get the current inhibition level
+     * @return Current inhibition amount
+     */
+    double getInhibition() const { return inhibition_; }
+
+    /**
+     * @brief Reset inhibition to zero
+     */
+    void resetInhibition() { inhibition_ = 0.0; }
+
+    /**
+     * @brief Get activation level (best similarity minus inhibition)
+     * @return Effective activation level
+     */
+    double getActivation() const;
+
+    /**
+     * @brief Update firing rate statistics (for homeostatic plasticity)
+     * @param currentTime Current simulation time
+     */
+    void updateFiringRate(double currentTime);
+
+    /**
+     * @brief Get the current firing rate (Hz)
+     * @return Firing rate in Hz
+     */
+    double getFiringRate() const { return firingRate_; }
+
+    /**
+     * @brief Set target firing rate for homeostatic plasticity
+     * @param targetRate Target firing rate in Hz
+     */
+    void setTargetFiringRate(double targetRate) { targetFiringRate_ = targetRate; }
+
+    /**
+     * @brief Apply homeostatic plasticity to adjust intrinsic excitability
+     * Increases excitability if firing rate is too low, decreases if too high
+     */
+    void applyHomeostaticPlasticity();
 
     /**
      * @brief Fire the neuron and send acknowledgments to presynaptic neurons
@@ -191,6 +277,13 @@ public:
      */
     void clearOldIncomingSpikes(double currentTime);
 
+    /**
+     * @brief Perform periodic memory cleanup to prevent memory leaks
+     * Clears old spikes, shrinks containers, and resets counters
+     * @param currentTime Current simulation time
+     */
+    void periodicMemoryCleanup(double currentTime);
+
     // Serializable interface implementation
     std::string toJson() const override;
     bool fromJson(const std::string& json) override;
@@ -203,12 +296,14 @@ private:
     struct IncomingSpike {
         uint64_t synapseId;   ///< ID of the synapse that delivered the spike
         double arrivalTime;   ///< Time when the spike arrived at this neuron
+        double dispatchTime;  ///< Time when the spike was originally dispatched
 
-        IncomingSpike(uint64_t synId, double time) : synapseId(synId), arrivalTime(time) {}
+        IncomingSpike(uint64_t synId, double arrTime, double dispTime = 0.0)
+            : synapseId(synId), arrivalTime(arrTime), dispatchTime(dispTime) {}
     };
 
-    std::vector<double> spikes;                          ///< Rolling spike window
-    std::vector<std::vector<double>> referencePatterns;  ///< Learned reference patterns
+    std::vector<double> spikes;                          ///< Rolling spike window (temporary, converted to BinaryPattern)
+    std::vector<BinaryPattern> referencePatterns;        ///< Learned reference patterns (200 bytes each, FIXED SIZE)
     double windowSize;                                   ///< Size of rolling window in ms
     double threshold;                                    ///< Similarity threshold for firing
     size_t maxPatterns;                                  ///< Maximum number of reference patterns
@@ -217,16 +312,45 @@ private:
     std::vector<uint64_t> dendriteIds;                   ///< IDs of dendrites connected to this neuron
 
     std::shared_ptr<learning::PatternUpdateStrategy> patternStrategy_;  ///< Strategy for updating patterns (optional)
+    SimilarityMetric similarityMetric_;                  ///< Similarity metric for pattern matching (default: COSINE)
 
     // STDP-related members
     std::deque<IncomingSpike> incomingSpikes_;           ///< Recent incoming spikes for STDP (within window)
     std::weak_ptr<NetworkPropagator> networkPropagator_; ///< Reference to NetworkPropagator for sending acknowledgments
+
+    // Temporal signature - unique spike pattern for this neuron
+    std::vector<double> temporalSignature_;              ///< Unique temporal offsets (ms) for multi-spike pattern
+
+    // Inhibition for winner-take-all and lateral inhibition
+    double inhibition_;                                  ///< Current inhibition level (reduces activation)
+
+    // Homeostatic plasticity - firing rate regulation
+    double firingRate_;                                  ///< Current firing rate (Hz)
+    double targetFiringRate_;                            ///< Target firing rate for homeostasis (Hz)
+    double intrinsicExcitability_;                       ///< Intrinsic excitability multiplier (default: 1.0)
+    double lastFiringTime_;                              ///< Time of last firing event
+    int firingCount_;                                    ///< Number of firings in current window
+    double firingWindowStart_;                           ///< Start time of firing rate measurement window
+
+    /**
+     * @brief Generate a unique temporal signature for this neuron
+     * Creates a pattern of 1-10 spikes spread over ~100ms
+     */
+    void generateTemporalSignature();
 
     /**
      * @brief Remove spikes outside the rolling window
      * @param currentTime Current timestamp
      */
     void removeOldSpikes(double currentTime);
+
+    /**
+     * @brief Compute similarity between two patterns using the selected metric
+     * @param a First pattern
+     * @param b Second pattern
+     * @return Similarity score (0.0 to 1.0)
+     */
+    double computeSimilarity(const BinaryPattern& a, const BinaryPattern& b) const;
 
     /**
      * @brief Check if current pattern is similar to any reference pattern

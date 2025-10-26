@@ -94,9 +94,10 @@ public:
      * @param synapseId ID of the synapse that delivered the spike
      * @param spikeTime Time of the spike (in ms)
      * @param amplitude Amplitude of the spike (modulated by synaptic weight)
+     * @param dispatchTime Time when the spike was originally dispatched (in ms)
      * @return true if delivered successfully, false if neuron not found
      */
-    bool deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapseId, double spikeTime, double amplitude);
+    bool deliverSpikeToNeuron(uint64_t neuronId, uint64_t synapseId, double spikeTime, double amplitude, double dispatchTime = 0.0);
 
     /**
      * @brief Send an acknowledgment from a postsynaptic neuron to update a synapse
@@ -188,6 +189,16 @@ public:
      */
     void setSTDPParameters(double aPlus, double aMinus, double tauPlus, double tauMinus);
 
+    /**
+     * @brief Apply reward-modulated STDP to synapses targeting a specific neuron
+     * @param neuronId ID of the target neuron
+     * @param rewardFactor Reward multiplier (1.0 = normal STDP, >1.0 = enhanced learning, <1.0 = reduced learning)
+     *
+     * This strengthens synapses that contributed to the neuron's activation when reward is positive.
+     * Used for supervised learning where correct classifications receive reward.
+     */
+    void applyRewardModulatedSTDP(uint64_t neuronId, double rewardFactor);
+
 private:
     // Spike processor for temporal delivery
     std::shared_ptr<SpikeProcessor> spikeProcessor_;
@@ -197,6 +208,10 @@ private:
     std::map<uint64_t, std::shared_ptr<Axon>> axonRegistry_;
     std::map<uint64_t, std::shared_ptr<Synapse>> synapseRegistry_;
     std::map<uint64_t, std::shared_ptr<Dendrite>> dendriteRegistry_;
+
+    // Reverse index: dendrite ID -> list of synapses targeting that dendrite
+    // This enables O(1) lookup of synapses by dendrite instead of O(n) iteration
+    std::map<uint64_t, std::vector<std::shared_ptr<Synapse>>> dendriteToSynapsesIndex_;
 
     // Mutexes for thread-safe access
     mutable std::mutex neuronMutex_;

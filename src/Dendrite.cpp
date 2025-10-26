@@ -53,7 +53,8 @@ void Dendrite::receiveSpike(const std::shared_ptr<ActionPotential>& actionPotent
             targetNeuronId,
             actionPotential->getSynapseId(),
             actionPotential->getScheduledTime(),
-            actionPotential->getAmplitude()
+            actionPotential->getAmplitude(),
+            actionPotential->getDispatchTime()
         );
     } else {
         // Fallback: just log if no propagator is set (for backward compatibility)

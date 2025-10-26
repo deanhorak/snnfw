@@ -27,6 +27,8 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <future>
+#include <thread>
 
 #include "snnfw/NeuralObjectFactory.h"
 #include "snnfw/Brain.h"
@@ -103,6 +105,92 @@ std::vector<std::vector<double>> createGaborKernel(double orientation, double la
             double sinusoid = cos(2*M_PI*x_theta/lambda);
 
             kernel[y][x] = gaussian * sinusoid;
+        }
+    }
+
+    return kernel;
+}
+
+/**
+ * @brief Create a center-surround (Difference of Gaussians) filter kernel
+ * @param centerSigma Sigma for center Gaussian (smaller = tighter center)
+ * @param surroundSigma Sigma for surround Gaussian (larger = wider surround)
+ * @param onCenter If true, creates ON-center (bright center), else OFF-center (dark center)
+ * @param size Kernel size (default 9x9)
+ * @return DoG kernel for blob/hole detection
+ */
+std::vector<std::vector<double>> createCenterSurroundKernel(double centerSigma,
+                                                             double surroundSigma,
+                                                             bool onCenter = true,
+                                                             int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Normalize the DoG so it sums to zero (balanced center-surround)
+    double centerSum = 0.0;
+    double surroundSum = 0.0;
+
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            double dx = x - center;
+            double dy = y - center;
+            double distSq = dx*dx + dy*dy;
+
+            // Center Gaussian (positive)
+            double centerGaussian = exp(-distSq / (2*centerSigma*centerSigma));
+            centerSum += centerGaussian;
+
+            // Surround Gaussian (negative)
+            double surroundGaussian = exp(-distSq / (2*surroundSigma*surroundSigma));
+            surroundSum += surroundGaussian;
+        }
+    }
+
+    // Create normalized DoG
+    double polarity = onCenter ? 1.0 : -1.0;
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            double dx = x - center;
+            double dy = y - center;
+            double distSq = dx*dx + dy*dy;
+
+            double centerGaussian = exp(-distSq / (2*centerSigma*centerSigma)) / centerSum;
+            double surroundGaussian = exp(-distSq / (2*surroundSigma*surroundSigma)) / surroundSum;
+
+            // DoG = center - surround (or inverted for OFF-center)
+            kernel[y][x] = polarity * (centerGaussian - surroundGaussian);
+        }
+    }
+
+    return kernel;
+}
+
+/**
+ * @brief Create a simple Gaussian blob detector
+ * @param sigma Size of the blob to detect
+ * @param size Kernel size (default 9x9)
+ * @return Gaussian kernel for blob detection
+ */
+std::vector<std::vector<double>> createBlobKernel(double sigma, int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+    double sum = 0.0;
+
+    // Create Gaussian
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            double dx = x - center;
+            double dy = y - center;
+            double distSq = dx*dx + dy*dy;
+            kernel[y][x] = exp(-distSq / (2*sigma*sigma));
+            sum += kernel[y][x];
+        }
+    }
+
+    // Normalize
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            kernel[y][x] /= sum;
         }
     }
 
@@ -260,21 +348,47 @@ int main(int argc, char* argv[]) {
         std::cout << "✓ Created Nucleus: " << v1Nucleus->getName() << std::endl;
         
         // Create multi-modal cortical columns:
-        // - 12 orientations (0°, 15°, 30°, ..., 165°)
-        // - 3 spatial frequencies per orientation (low, medium, high)
-        // Total: 36 columns
+        // - 12 orientations × 2 spatial frequencies (low + high) = 24 columns
+        // - 4 center-surround scales × 2 types (ON-center + OFF-center) = 8 columns
+        // - 4 blob detectors (4 scales × 2 polarities) = 8 columns
+        // Total: 40 columns (balanced mix of edge, blob, and hole detectors)
         const int NUM_ORIENTATIONS = 12;
-        const int NUM_FREQUENCIES = 3;
-        const int NUM_COLUMNS = NUM_ORIENTATIONS * NUM_FREQUENCIES;
+        const int NUM_FREQUENCIES = 2;  // Low + High (skip medium to make room for center-surround)
+        const int NUM_CS_SCALES = 4;    // Center-surround scales (added extra for loop counting)
+        const int NUM_CS_TYPES = 2;     // ON-center (bright blob) + OFF-center (dark blob)
+        const int NUM_BLOB_SCALES = 4;  // Blob detector scales (added extra for better localization)
+        const int NUM_BLOB_TYPES = 2;   // Positive + Negative polarity
+
+        const int NUM_ORIENTATION_COLUMNS = NUM_ORIENTATIONS * NUM_FREQUENCIES;
+        const int NUM_CS_COLUMNS = NUM_CS_SCALES * NUM_CS_TYPES;
+        const int NUM_BLOB_COLUMNS = NUM_BLOB_SCALES * NUM_BLOB_TYPES;
+        const int NUM_COLUMNS = NUM_ORIENTATION_COLUMNS + NUM_CS_COLUMNS + NUM_BLOB_COLUMNS;
         const double ORIENTATION_STEP = 180.0 / NUM_ORIENTATIONS;
 
         // Spatial frequency channels (lambda values)
         const double FREQ_LOW = 8.0;     // Low frequency: thick strokes, overall shape
-        const double FREQ_MEDIUM = 5.0;  // Medium frequency: normal edges
         const double FREQ_HIGH = 3.0;    // High frequency: fine details, thin strokes
 
-        const std::vector<double> SPATIAL_FREQUENCIES = {FREQ_LOW, FREQ_MEDIUM, FREQ_HIGH};
-        const std::vector<std::string> FREQ_NAMES = {"low_freq", "med_freq", "high_freq"};
+        const std::vector<double> SPATIAL_FREQUENCIES = {FREQ_LOW, FREQ_HIGH};
+        const std::vector<std::string> FREQ_NAMES = {"low_freq", "high_freq"};
+
+        // Center-surround parameters (for loop/hole detection)
+        // MNIST digits are 28x28, so we need to tune for digit-scale features
+        // After max-pooling to 8x8, features are ~3.5x smaller
+        // Adjusted for better loop detection and counting:
+        const std::vector<std::pair<double, double>> CS_PARAMS = {
+            {0.7, 2.0},  // Extra small: very tight curves (digit 6, 9 small loops)
+            {1.2, 3.5},  // Small: digit 8 individual loops, digit 4 open top
+            {2.0, 5.0},  // Medium: digit 0 loop, digit 8 combined loops
+            {3.0, 7.0}   // Large: whole digit scale (distinguish 0 vs 8)
+        };
+        const std::vector<std::string> CS_SCALE_NAMES = {"extra_small", "small", "medium", "large"};
+        const std::vector<std::string> CS_TYPE_NAMES = {"ON_center", "OFF_center"};
+
+        // Blob detector parameters (for endpoint/solid region detection)
+        // Tuned to detect stroke endpoints, junctions, and solid regions at multiple scales
+        const std::vector<double> BLOB_SIGMAS = {0.8, 1.5, 2.5, 4.0};  // 4 scales for better feature coverage
+        const std::vector<std::string> BLOB_SCALE_NAMES = {"tiny_blob", "small_blob", "med_blob", "large_blob"};
 
         // Neuron counts per layer (OPTIMAL CONFIGURATION)
         // After systematic testing, L2/3 = 256 achieves best accuracy (70.63%)
@@ -287,9 +401,16 @@ int main(int argc, char* argv[]) {
         std::vector<CorticalColumn> corticalColumns;
 
         std::cout << "\n=== Creating " << NUM_COLUMNS << " Cortical Columns ===" << std::endl;
-        std::cout << "  " << NUM_ORIENTATIONS << " orientations × " << NUM_FREQUENCIES << " spatial frequencies" << std::endl;
+        std::cout << "  " << NUM_ORIENTATION_COLUMNS << " orientation columns (" << NUM_ORIENTATIONS
+                  << " orientations × " << NUM_FREQUENCIES << " frequencies)" << std::endl;
+        std::cout << "  " << NUM_CS_COLUMNS << " center-surround columns (" << NUM_CS_SCALES
+                  << " scales × " << NUM_CS_TYPES << " types)" << std::endl;
+        std::cout << "  " << NUM_BLOB_COLUMNS << " blob detector columns (" << NUM_BLOB_SCALES
+                  << " scales × " << NUM_BLOB_TYPES << " types)" << std::endl;
 
         int colIdx = 0;
+
+        // Create orientation-selective columns (straight edge detectors)
         for (int oriIdx = 0; oriIdx < NUM_ORIENTATIONS; ++oriIdx) {
             double orientation = oriIdx * ORIENTATION_STEP;
 
@@ -297,7 +418,7 @@ int main(int argc, char* argv[]) {
                 CorticalColumn col;
                 col.orientation = orientation;
                 col.spatialFrequency = SPATIAL_FREQUENCIES[freqIdx];
-                col.featureType = FREQ_NAMES[freqIdx];
+                col.featureType = "orientation_" + FREQ_NAMES[freqIdx];
                 col.gaborKernel = createGaborKernel(col.orientation, col.spatialFrequency);
 
                 // Create column
@@ -379,8 +500,196 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns (" << NUM_ORIENTATIONS
-                  << " orientations × " << NUM_FREQUENCIES << " frequencies)" << std::endl;
+        // Create center-surround columns (loop/hole detectors)
+        for (int scaleIdx = 0; scaleIdx < NUM_CS_SCALES; ++scaleIdx) {
+            auto [centerSigma, surroundSigma] = CS_PARAMS[scaleIdx];
+            std::string scaleName = CS_SCALE_NAMES[scaleIdx];
+
+            for (int typeIdx = 0; typeIdx < NUM_CS_TYPES; ++typeIdx) {
+                bool onCenter = (typeIdx == 0);
+                std::string typeName = CS_TYPE_NAMES[typeIdx];
+
+                CorticalColumn col;
+                col.orientation = 0.0;  // Not orientation-selective
+                col.spatialFrequency = centerSigma;  // Store center sigma
+                col.featureType = "center_surround_" + scaleName + "_" + typeName;
+                col.gaborKernel = createCenterSurroundKernel(centerSigma, surroundSigma, onCenter);
+
+                // Create column
+                col.column = factory.createColumn();
+                v1Nucleus->addColumn(col.column->getId());
+
+                std::cout << "\n--- Column " << colIdx << " (Center-Surround: " << scaleName
+                          << ", " << typeName << ", σ_c=" << centerSigma << ", σ_s=" << surroundSigma << ") ---" << std::endl;
+
+                // Create layers (same structure as orientation columns)
+                // Layer 1
+                col.layer1 = factory.createLayer();
+                col.column->addLayer(col.layer1->getId());
+                auto layer1Cluster = factory.createCluster();
+                col.layer1->addCluster(layer1Cluster->getId());
+                for (int i = 0; i < LAYER1_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer1Neurons.push_back(neuron);
+                    layer1Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 1: " << col.layer1Neurons.size() << " neurons" << std::endl;
+
+                // Layer 2/3
+                col.layer23 = factory.createLayer();
+                col.column->addLayer(col.layer23->getId());
+                auto layer23Cluster = factory.createCluster();
+                col.layer23->addCluster(layer23Cluster->getId());
+                for (int i = 0; i < LAYER23_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer23Neurons.push_back(neuron);
+                    layer23Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 2/3: " << col.layer23Neurons.size() << " neurons" << std::endl;
+
+                // Layer 4
+                col.layer4 = factory.createLayer();
+                col.column->addLayer(col.layer4->getId());
+                auto layer4Cluster = factory.createCluster();
+                col.layer4->addCluster(layer4Cluster->getId());
+                for (int i = 0; i < LAYER4_SIZE * LAYER4_SIZE; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer4Neurons.push_back(neuron);
+                    layer4Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 4: " << col.layer4Neurons.size() << " neurons" << std::endl;
+
+                // Layer 5
+                col.layer5 = factory.createLayer();
+                col.column->addLayer(col.layer5->getId());
+                auto layer5Cluster = factory.createCluster();
+                col.layer5->addCluster(layer5Cluster->getId());
+                for (int i = 0; i < LAYER5_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer5Neurons.push_back(neuron);
+                    layer5Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 5: " << col.layer5Neurons.size() << " neurons" << std::endl;
+
+                // Layer 6
+                col.layer6 = factory.createLayer();
+                col.column->addLayer(col.layer6->getId());
+                auto layer6Cluster = factory.createCluster();
+                col.layer6->addCluster(layer6Cluster->getId());
+                for (int i = 0; i < LAYER6_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer6Neurons.push_back(neuron);
+                    layer6Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 6: " << col.layer6Neurons.size() << " neurons" << std::endl;
+
+                corticalColumns.push_back(col);
+                colIdx++;
+            }
+        }
+
+        // Create blob detector columns (solid region detectors)
+        for (int scaleIdx = 0; scaleIdx < NUM_BLOB_SCALES; ++scaleIdx) {
+            double sigma = BLOB_SIGMAS[scaleIdx];
+            std::string scaleName = BLOB_SCALE_NAMES[scaleIdx];
+
+            for (int typeIdx = 0; typeIdx < NUM_BLOB_TYPES; ++typeIdx) {
+                double polarity = (typeIdx == 0) ? 1.0 : -1.0;
+                std::string typeName = (typeIdx == 0) ? "positive" : "negative";
+
+                CorticalColumn col;
+                col.orientation = 0.0;  // Not orientation-selective
+                col.spatialFrequency = sigma;  // Store sigma
+                col.featureType = "blob_" + scaleName + "_" + typeName;
+
+                // Create blob kernel and apply polarity
+                auto blobKernel = createBlobKernel(sigma);
+                if (polarity < 0) {
+                    for (auto& row : blobKernel) {
+                        for (auto& val : row) {
+                            val *= -1.0;
+                        }
+                    }
+                }
+                col.gaborKernel = blobKernel;
+
+                // Create column
+                col.column = factory.createColumn();
+                v1Nucleus->addColumn(col.column->getId());
+
+                std::cout << "\n--- Column " << colIdx << " (Blob: " << scaleName
+                          << ", " << typeName << ", σ=" << sigma << ") ---" << std::endl;
+
+                // Create layers (same structure)
+                // Layer 1
+                col.layer1 = factory.createLayer();
+                col.column->addLayer(col.layer1->getId());
+                auto layer1Cluster = factory.createCluster();
+                col.layer1->addCluster(layer1Cluster->getId());
+                for (int i = 0; i < LAYER1_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer1Neurons.push_back(neuron);
+                    layer1Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 1: " << col.layer1Neurons.size() << " neurons" << std::endl;
+
+                // Layer 2/3
+                col.layer23 = factory.createLayer();
+                col.column->addLayer(col.layer23->getId());
+                auto layer23Cluster = factory.createCluster();
+                col.layer23->addCluster(layer23Cluster->getId());
+                for (int i = 0; i < LAYER23_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer23Neurons.push_back(neuron);
+                    layer23Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 2/3: " << col.layer23Neurons.size() << " neurons" << std::endl;
+
+                // Layer 4
+                col.layer4 = factory.createLayer();
+                col.column->addLayer(col.layer4->getId());
+                auto layer4Cluster = factory.createCluster();
+                col.layer4->addCluster(layer4Cluster->getId());
+                for (int i = 0; i < LAYER4_SIZE * LAYER4_SIZE; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer4Neurons.push_back(neuron);
+                    layer4Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 4: " << col.layer4Neurons.size() << " neurons" << std::endl;
+
+                // Layer 5
+                col.layer5 = factory.createLayer();
+                col.column->addLayer(col.layer5->getId());
+                auto layer5Cluster = factory.createCluster();
+                col.layer5->addCluster(layer5Cluster->getId());
+                for (int i = 0; i < LAYER5_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer5Neurons.push_back(neuron);
+                    layer5Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 5: " << col.layer5Neurons.size() << " neurons" << std::endl;
+
+                // Layer 6
+                col.layer6 = factory.createLayer();
+                col.column->addLayer(col.layer6->getId());
+                auto layer6Cluster = factory.createCluster();
+                col.layer6->addCluster(layer6Cluster->getId());
+                for (int i = 0; i < LAYER6_NEURONS; ++i) {
+                    auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                    col.layer6Neurons.push_back(neuron);
+                    layer6Cluster->addNeuron(neuron->getId());
+                }
+                std::cout << "  ✓ Layer 6: " << col.layer6Neurons.size() << " neurons" << std::endl;
+
+                corticalColumns.push_back(col);
+                colIdx++;
+            }
+        }
+
+        std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns:" << std::endl;
+        std::cout << "  - " << NUM_ORIENTATION_COLUMNS << " orientation columns" << std::endl;
+        std::cout << "  - " << NUM_CS_COLUMNS << " center-surround columns" << std::endl;
+        std::cout << "  - " << NUM_BLOB_COLUMNS << " blob detector columns" << std::endl;
 
         // ========================================================================
         // Create Inter-Layer Connections Within Each Column
@@ -878,21 +1187,42 @@ int main(int argc, char* argv[]) {
             // Also fire Layer 5 neurons based on Layer 4 activity (hierarchical processing)
             std::vector<std::shared_ptr<Neuron>> layer5Neurons;
 
-            // First pass: Calculate column strengths for selective firing
+            // First pass: Calculate column strengths for selective firing (PARALLELIZED)
             std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
             std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
 
-            for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                auto& col = corticalColumns[colIdx];
-                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+            // Parallelize Gabor filter application across columns
+            const int numThreads = std::min(24, NUM_COLUMNS);
+            std::vector<std::future<void>> futures;
 
-                // Collect active Layer 4 neurons and calculate column strength
-                for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
-                    if (gaborResponse[neuronIdx] > 0.1) {
-                        columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
-                        columnStrengths[colIdx] += gaborResponse[neuronIdx];
+            auto processColumnBatch = [&](int startCol, int endCol) {
+                for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
+                    auto& col = corticalColumns[colIdx];
+                    auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+
+                    // Collect active Layer 4 neurons and calculate column strength
+                    for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
+                        if (gaborResponse[neuronIdx] > 0.1) {
+                            columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
+                            columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                        }
                     }
                 }
+            };
+
+            // Divide columns among threads
+            int colsPerThread = (NUM_COLUMNS + numThreads - 1) / numThreads;
+            for (int t = 0; t < numThreads; ++t) {
+                int startCol = t * colsPerThread;
+                int endCol = std::min(startCol + colsPerThread, NUM_COLUMNS);
+                if (startCol < NUM_COLUMNS) {
+                    futures.push_back(std::async(std::launch::async, processColumnBatch, startCol, endCol));
+                }
+            }
+
+            // Wait for all threads to complete
+            for (auto& f : futures) {
+                f.get();
             }
 
             // Calculate mean column strength for selective firing
@@ -1001,6 +1331,9 @@ int main(int argc, char* argv[]) {
         std::vector<int> perDigitCorrect(10, 0);
         std::vector<int> perDigitTotal(10, 0);
 
+        // Confusion matrix: confusionMatrix[true][predicted]
+        std::vector<std::vector<int>> confusionMatrix(10, std::vector<int>(10, 0));
+
         size_t numTestImages = std::min((size_t)config.testImages, testLoader.size());
 
         for (size_t i = 0; i < numTestImages; ++i) {
@@ -1022,20 +1355,41 @@ int main(int argc, char* argv[]) {
             // Also fire Layer 5 neurons based on Layer 4 activity
             std::vector<std::shared_ptr<Neuron>> layer5Neurons;
 
-            // First pass: Calculate column strengths (same as training)
+            // First pass: Calculate column strengths (PARALLELIZED)
             std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
             std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
 
-            for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                auto& col = corticalColumns[colIdx];
-                auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+            // Parallelize Gabor filter application across columns
+            const int numThreads = std::min(24, NUM_COLUMNS);
+            std::vector<std::future<void>> futures;
 
-                for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
-                    if (gaborResponse[neuronIdx] > 0.1) {
-                        columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
-                        columnStrengths[colIdx] += gaborResponse[neuronIdx];
+            auto processColumnBatch = [&](int startCol, int endCol) {
+                for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
+                    auto& col = corticalColumns[colIdx];
+                    auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+
+                    for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
+                        if (gaborResponse[neuronIdx] > 0.1) {
+                            columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
+                            columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                        }
                     }
                 }
+            };
+
+            // Divide columns among threads
+            int colsPerThread = (NUM_COLUMNS + numThreads - 1) / numThreads;
+            for (int t = 0; t < numThreads; ++t) {
+                int startCol = t * colsPerThread;
+                int endCol = std::min(startCol + colsPerThread, NUM_COLUMNS);
+                if (startCol < NUM_COLUMNS) {
+                    futures.push_back(std::async(std::launch::async, processColumnBatch, startCol, endCol));
+                }
+            }
+
+            // Wait for all threads to complete
+            for (auto& f : futures) {
+                f.get();
             }
 
             // Calculate mean column strength
@@ -1112,6 +1466,7 @@ int main(int argc, char* argv[]) {
 
             // Update statistics
             perDigitTotal[trueLabel]++;
+            confusionMatrix[trueLabel][predicted]++;
             if (predicted == trueLabel) {
                 correct++;
                 perDigitCorrect[trueLabel]++;
@@ -1139,6 +1494,54 @@ int main(int argc, char* argv[]) {
                 std::cout << "    Digit " << d << ": " << std::fixed << std::setprecision(1)
                           << acc << "% (" << perDigitCorrect[d] << "/" << perDigitTotal[d] << ")" << std::endl;
             }
+        }
+
+        // Print confusion matrix
+        std::cout << "\n=== Confusion Matrix ===" << std::endl;
+        std::cout << "Rows = True Label, Columns = Predicted Label\n" << std::endl;
+
+        // Header
+        std::cout << "True\\Pred";
+        for (int p = 0; p < 10; ++p) {
+            std::cout << std::setw(6) << p;
+        }
+        std::cout << std::endl;
+
+        // Matrix rows
+        for (int t = 0; t < 10; ++t) {
+            std::cout << std::setw(9) << t;
+            for (int p = 0; p < 10; ++p) {
+                std::cout << std::setw(6) << confusionMatrix[t][p];
+            }
+            std::cout << std::endl;
+        }
+
+        // Analyze top confusions (excluding correct predictions)
+        std::cout << "\n=== Top Confusions (True → Predicted) ===" << std::endl;
+        std::vector<std::tuple<int, int, int, double>> confusions;  // (true, pred, count, percentage)
+
+        for (int t = 0; t < 10; ++t) {
+            for (int p = 0; p < 10; ++p) {
+                if (t != p && confusionMatrix[t][p] > 0) {
+                    double percentage = 100.0 * confusionMatrix[t][p] / perDigitTotal[t];
+                    confusions.push_back({t, p, confusionMatrix[t][p], percentage});
+                }
+            }
+        }
+
+        // Sort by count (descending)
+        std::sort(confusions.begin(), confusions.end(),
+                 [](const auto& a, const auto& b) { return std::get<2>(a) > std::get<2>(b); });
+
+        // Print top 20 confusions
+        std::cout << "Rank  True→Pred  Count  % of True" << std::endl;
+        for (size_t i = 0; i < std::min(size_t(20), confusions.size()); ++i) {
+            auto [t, p, count, pct] = confusions[i];
+            std::cout << std::setw(4) << (i+1) << "  "
+                      << std::setw(4) << t << "→" << std::setw(4) << p << "  "
+                      << std::setw(5) << count << "  "
+                      << std::fixed << std::setprecision(1) << std::setw(6) << pct << "%"
+                      << std::endl;
         }
 
         return 0;

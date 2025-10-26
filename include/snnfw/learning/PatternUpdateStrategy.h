@@ -7,6 +7,11 @@
 #include <map>
 #include <functional>
 
+// Forward declaration
+namespace snnfw {
+    class BinaryPattern;
+}
+
 namespace snnfw {
 namespace learning {
 
@@ -66,7 +71,7 @@ public:
     virtual ~PatternUpdateStrategy() = default;
 
     /**
-     * @brief Update pattern storage with a new pattern
+     * @brief Update pattern storage with a new pattern (vector<double> version)
      * @param patterns Current stored patterns (may be modified)
      * @param newPattern New pattern to add/merge
      * @param similarityMetric Function to compute similarity between patterns
@@ -82,6 +87,23 @@ public:
         std::vector<std::vector<double>>& patterns,
         const std::vector<double>& newPattern,
         std::function<double(const std::vector<double>&, const std::vector<double>&)> similarityMetric) const = 0;
+
+    /**
+     * @brief Update pattern storage with a new pattern (BinaryPattern version)
+     * @param patterns Current stored patterns (may be modified)
+     * @param newPattern New pattern to add/merge
+     * @param similarityMetric Function to compute similarity between patterns
+     * @return True if patterns were modified, false otherwise
+     *
+     * Default implementation: not supported (returns false)
+     * Derived classes should override this to support BinaryPattern
+     */
+    virtual bool updatePatterns(
+        std::vector<BinaryPattern>& patterns,
+        const BinaryPattern& newPattern,
+        std::function<double(const BinaryPattern&, const BinaryPattern&)> similarityMetric) const {
+        return false;  // Default: not supported
+    }
 
     /**
      * @brief Get the strategy name
