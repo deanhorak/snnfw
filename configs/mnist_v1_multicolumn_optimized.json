@@ -12,7 +12,7 @@
   "neuron": {
     "window_size_ms": 100.0,
     "similarity_threshold": 0.85,
-    "max_patterns": 200,
+    "max_patterns": 400,
     "similarity_metric": "histogram"
   },
   "learning": {
@@ -28,7 +28,7 @@
     "distance_exponent": 2.0
   },
   "training": {
-    "examples_per_digit": 4000,
+    "examples_per_digit": 6000,
     "test_images": 10000
   },
   "spike_processor": {

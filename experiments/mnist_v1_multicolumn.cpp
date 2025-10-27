@@ -715,25 +715,42 @@ int main(int argc, char* argv[]) {
             std::cout << "Column " << colIdx << " (" << col.orientation << "°):" << std::endl;
 
             // ====================================================================
-            // Layer 4 → Layer 2/3 (feedforward, 50% connectivity)
+            // Layer 4 → Layer 2/3 (feedforward with spatial pooling structure)
             // ====================================================================
+            // Layer 2/3 neurons are organized into functional groups:
+            // - First 128 neurons: Random connectivity (general feature integration)
+            // - Next 64 neurons: Spatial pooling neurons (4 quadrants × 16 neurons each)
+            // - Last 64 neurons: Global pooling neurons (whole-field integration)
+
             int l4_to_l23 = 0;
+            const int GENERAL_L23_NEURONS = 128;  // General feature integration
+            const int SPATIAL_POOL_NEURONS = 64;  // Spatial pooling (4 quadrants × 16)
+            const int GLOBAL_POOL_NEURONS = 64;   // Global pooling
+
+            // Ensure we have enough L2/3 neurons (should be 256)
+            if (col.layer23Neurons.size() < GENERAL_L23_NEURONS + SPATIAL_POOL_NEURONS + GLOBAL_POOL_NEURONS) {
+                std::cerr << "Warning: Not enough L2/3 neurons for spatial pooling!" << std::endl;
+            }
+
+            // Create axons for all L4 neurons
             for (auto& l4Neuron : col.layer4Neurons) {
-                // Create axon for L4 neuron if not exists
                 if (l4Neuron->getAxonId() == 0) {
                     auto axon = factory.createAxon(l4Neuron->getId());
                     l4Neuron->setAxonId(axon->getId());
                     allAxons.push_back(axon);
                 }
+            }
 
-                for (auto& l23Neuron : col.layer23Neurons) {
+            // 1. General L2/3 neurons: Random 50% connectivity from all L4 neurons
+            for (int i = 0; i < GENERAL_L23_NEURONS && i < col.layer23Neurons.size(); ++i) {
+                auto& l23Neuron = col.layer23Neurons[i];
+
+                for (auto& l4Neuron : col.layer4Neurons) {
                     if (dis(gen) < 0.5) {
-                        // Create dendrite for L2/3 neuron
                         auto dendrite = factory.createDendrite(l23Neuron->getId());
                         l23Neuron->addDendrite(dendrite->getId());
                         allDendrites.push_back(dendrite);
 
-                        // Create synapse
                         auto synapse = factory.createSynapse(
                             l4Neuron->getAxonId(),
                             dendrite->getId(),
@@ -745,7 +762,79 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
+
+            // 2. Spatial pooling neurons: Connect to specific quadrants of L4 grid
+            // L4 is 8x8 grid, divide into 4 quadrants (4x4 each)
+            const int QUADRANT_SIZE = 4;  // 4x4 neurons per quadrant
+            const int NEURONS_PER_QUADRANT = 16;  // 16 L2/3 neurons per quadrant
+
+            for (int quadrant = 0; quadrant < 4; ++quadrant) {
+                int qRow = (quadrant / 2) * QUADRANT_SIZE;  // 0 or 4
+                int qCol = (quadrant % 2) * QUADRANT_SIZE;  // 0 or 4
+
+                // Connect 16 L2/3 neurons to this quadrant
+                for (int neuronIdx = 0; neuronIdx < NEURONS_PER_QUADRANT; ++neuronIdx) {
+                    int l23Idx = GENERAL_L23_NEURONS + quadrant * NEURONS_PER_QUADRANT + neuronIdx;
+                    if (l23Idx >= col.layer23Neurons.size()) break;
+
+                    auto& l23Neuron = col.layer23Neurons[l23Idx];
+
+                    // Connect to L4 neurons in this quadrant with high connectivity (80%)
+                    for (int row = qRow; row < qRow + QUADRANT_SIZE; ++row) {
+                        for (int col_x = qCol; col_x < qCol + QUADRANT_SIZE; ++col_x) {
+                            int l4Idx = row * LAYER4_SIZE + col_x;
+                            if (l4Idx >= col.layer4Neurons.size()) continue;
+
+                            auto& l4Neuron = col.layer4Neurons[l4Idx];
+
+                            if (dis(gen) < 0.8) {  // High connectivity within quadrant
+                                auto dendrite = factory.createDendrite(l23Neuron->getId());
+                                l23Neuron->addDendrite(dendrite->getId());
+                                allDendrites.push_back(dendrite);
+
+                                auto synapse = factory.createSynapse(
+                                    l4Neuron->getAxonId(),
+                                    dendrite->getId(),
+                                    1.2,  // Stronger weight for spatial pooling
+                                    1.0   // delay (ms)
+                                );
+                                allSynapses.push_back(synapse);
+                                l4_to_l23++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Global pooling neurons: Connect to all L4 neurons with moderate connectivity
+            for (int i = 0; i < GLOBAL_POOL_NEURONS; ++i) {
+                int l23Idx = GENERAL_L23_NEURONS + SPATIAL_POOL_NEURONS + i;
+                if (l23Idx >= col.layer23Neurons.size()) break;
+
+                auto& l23Neuron = col.layer23Neurons[l23Idx];
+
+                for (auto& l4Neuron : col.layer4Neurons) {
+                    if (dis(gen) < 0.6) {  // Moderate global connectivity
+                        auto dendrite = factory.createDendrite(l23Neuron->getId());
+                        l23Neuron->addDendrite(dendrite->getId());
+                        allDendrites.push_back(dendrite);
+
+                        auto synapse = factory.createSynapse(
+                            l4Neuron->getAxonId(),
+                            dendrite->getId(),
+                            0.8,  // Moderate weight for global pooling
+                            1.0   // delay (ms)
+                        );
+                        allSynapses.push_back(synapse);
+                        l4_to_l23++;
+                    }
+                }
+            }
+
             std::cout << "  ✓ Layer 4 → Layer 2/3: " << l4_to_l23 << " synapses" << std::endl;
+            std::cout << "    - " << GENERAL_L23_NEURONS << " general neurons (random connectivity)" << std::endl;
+            std::cout << "    - " << SPATIAL_POOL_NEURONS << " spatial pooling neurons (4 quadrants)" << std::endl;
+            std::cout << "    - " << GLOBAL_POOL_NEURONS << " global pooling neurons" << std::endl;
             totalConnections += l4_to_l23;
 
             // ====================================================================
@@ -923,6 +1012,62 @@ int main(int argc, char* argv[]) {
         std::cout << "✓ Created " << lateralConnections << " lateral connections between neighboring columns" << std::endl;
         std::cout << "  Connectivity: " << (LATERAL_CONNECTIVITY * 100) << "% between ±"
                   << NEIGHBOR_RANGE << " neighboring columns" << std::endl;
+
+        // ========================================================================
+        // Create Recurrent Connections Within Layer 2/3 (for temporal integration)
+        // Allows neurons to maintain activity over time and integrate patterns
+        // ========================================================================
+        std::cout << "\n=== Creating Recurrent Connections Within Layer 2/3 ===" << std::endl;
+
+        int recurrentConnections = 0;
+        const double RECURRENT_CONNECTIVITY = 0.15;  // 15% sparse recurrent connectivity
+        const double RECURRENT_WEIGHT = 0.4;  // Moderate weight for temporal integration
+        const double RECURRENT_DELAY = 2.0;  // 2ms delay for recurrent feedback
+
+        for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
+            auto& col = corticalColumns[colIdx];
+
+            // Create recurrent connections within Layer 2/3
+            for (size_t i = 0; i < col.layer23Neurons.size(); ++i) {
+                auto& sourceNeuron = col.layer23Neurons[i];
+
+                // Ensure source neuron has an axon
+                if (sourceNeuron->getAxonId() == 0) {
+                    auto axon = factory.createAxon(sourceNeuron->getId());
+                    sourceNeuron->setAxonId(axon->getId());
+                    allAxons.push_back(axon);
+                }
+
+                // Connect to other neurons in the same layer (excluding self)
+                for (size_t j = 0; j < col.layer23Neurons.size(); ++j) {
+                    if (i == j) continue;  // Skip self-connections
+
+                    auto& targetNeuron = col.layer23Neurons[j];
+
+                    if (dis(gen) < RECURRENT_CONNECTIVITY) {
+                        // Create dendrite for target neuron
+                        auto dendrite = factory.createDendrite(targetNeuron->getId());
+                        targetNeuron->addDendrite(dendrite->getId());
+                        allDendrites.push_back(dendrite);
+
+                        // Create recurrent synapse
+                        auto synapse = factory.createSynapse(
+                            sourceNeuron->getAxonId(),
+                            dendrite->getId(),
+                            RECURRENT_WEIGHT,  // Moderate weight for temporal integration
+                            RECURRENT_DELAY    // Delayed feedback for temporal dynamics
+                        );
+                        allSynapses.push_back(synapse);
+                        recurrentConnections++;
+                    }
+                }
+            }
+        }
+
+        std::cout << "✓ Created " << recurrentConnections << " recurrent connections within Layer 2/3" << std::endl;
+        std::cout << "  Connectivity: " << (RECURRENT_CONNECTIVITY * 100) << "% within each column" << std::endl;
+        std::cout << "  Weight: " << RECURRENT_WEIGHT << ", Delay: " << RECURRENT_DELAY << "ms" << std::endl;
+        std::cout << "  Purpose: Temporal integration and sustained activity for pattern recognition" << std::endl;
 
         const int LAYER4_NEURONS = LAYER4_SIZE * LAYER4_SIZE;
         const int NEURONS_PER_COLUMN = LAYER1_NEURONS + LAYER23_NEURONS + LAYER4_NEURONS + LAYER5_NEURONS + LAYER6_NEURONS;
