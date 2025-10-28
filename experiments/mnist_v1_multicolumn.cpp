@@ -199,30 +199,36 @@ std::vector<std::vector<double>> createBlobKernel(double sigma, int size = 9) {
 
 /**
  * @brief Create a top-region loop detector (for distinguishing 4 vs 9, 7 vs 9)
- * Detects closed loops in the upper portion of the image
+ * Detects closed loops in the upper-right portion of the image
+ * Refined to avoid false positives on digit 3's curved top
  * @param size Kernel size (default 9x9)
- * @return Kernel that responds strongly to closed loops in top region
+ * @return Kernel that responds strongly to closed loops in top-right region
  */
 std::vector<std::vector<double>> createTopLoopKernel(int size = 9) {
     std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
     int center = size / 2;
 
-    // Create a ring pattern in the top half
-    // Strong positive response for circular patterns in upper region
+    // Create a tighter ring pattern focused on upper-right quadrant
+    // This is where digit 9's loop is, but digit 3's curve is more open
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x) {
-            double dx = x - center;
-            double dy = y - (center - 1);  // Shift center up slightly
+            // Shift center to upper-right (where digit 9's loop is)
+            double dx = x - (center + 1);
+            double dy = y - (center - 1);
             double dist = sqrt(dx*dx + dy*dy);
 
-            // Ring pattern: positive at radius ~2-3, negative inside and outside
-            if (y < center + 1) {  // Focus on top half
-                if (dist >= 1.5 && dist <= 3.0) {
-                    kernel[y][x] = 1.0;  // Ring
-                } else if (dist < 1.5) {
-                    kernel[y][x] = -0.5;  // Inside (hole)
-                } else if (dist > 3.0 && dist < 4.0) {
-                    kernel[y][x] = -0.3;  // Outside
+            // Tighter ring pattern with stronger contrast
+            // Focus on top-right quadrant (x >= center, y <= center)
+            if (x >= center - 1 && y <= center + 1) {
+                if (dist >= 1.2 && dist <= 2.5) {
+                    // Ring edge - strong positive
+                    kernel[y][x] = 1.5;
+                } else if (dist < 1.2) {
+                    // Inside hole - strong negative (key for closed loop)
+                    kernel[y][x] = -1.0;
+                } else if (dist > 2.5 && dist < 3.5) {
+                    // Outside ring - moderate negative
+                    kernel[y][x] = -0.4;
                 }
             }
         }
@@ -233,6 +239,7 @@ std::vector<std::vector<double>> createTopLoopKernel(int size = 9) {
 
 /**
  * @brief Create a gap detector for open regions (for detecting digit 4's open top)
+ * Refined to strongly respond to horizontal gaps (open top) vs closed loops
  * @param size Kernel size (default 9x9)
  * @return Kernel that responds to gaps/openings in top region
  */
@@ -240,17 +247,27 @@ std::vector<std::vector<double>> createGapKernel(int size = 9) {
     std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
     int center = size / 2;
 
-    // Detect vertical gaps in top region
-    // Positive response for vertical edges with gap in middle
+    // Detect horizontal gap in top-center region (digit 4's open top)
+    // Strong response when there's a gap between left and right strokes
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x) {
-            if (y < center) {  // Top half only
-                if (x < center - 1) {
-                    kernel[y][x] = 0.5;  // Left edge
-                } else if (x > center + 1) {
-                    kernel[y][x] = 0.5;  // Right edge
-                } else {
-                    kernel[y][x] = -1.0;  // Gap in middle
+            // Focus on top region (upper 60% of kernel)
+            if (y <= center + 1) {
+                // Create a horizontal gap detector
+                // Left stroke region
+                if (x <= center - 2) {
+                    kernel[y][x] = 1.2;  // Strong positive for left edge
+                }
+                // Right stroke region
+                else if (x >= center + 2) {
+                    kernel[y][x] = 1.2;  // Strong positive for right edge
+                }
+                // Gap in middle (key discriminator)
+                else {
+                    // Very strong negative in the gap region
+                    // This should fire strongly for digit 4 (open gap)
+                    // but weakly for digit 9 (closed loop fills this region)
+                    kernel[y][x] = -2.0;
                 }
             }
         }
