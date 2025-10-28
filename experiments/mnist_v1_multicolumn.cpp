@@ -277,6 +277,113 @@ std::vector<std::vector<double>> createGapKernel(int size = 9) {
 }
 
 /**
+ * @brief Create a bottom-curve detector (for distinguishing 2 vs 0)
+ * Digit 2 has a curved stroke at bottom-left, digit 0 has a closed loop
+ * @param size Kernel size (default 9x9)
+ * @return Kernel that responds to bottom-left curves
+ */
+std::vector<std::vector<double>> createBottomCurveKernel(int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Detect curved stroke in bottom-left region (digit 2's tail)
+    // Positive for diagonal/horizontal stroke, negative for vertical closure
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            // Focus on bottom half
+            if (y >= center) {
+                // Bottom-left quadrant (where digit 2's tail curves)
+                if (x <= center) {
+                    double dx = x - (center - 2);
+                    double dy = y - (center + 2);
+                    double dist = sqrt(dx*dx + dy*dy);
+
+                    // Curved stroke pattern
+                    if (dist >= 1.0 && dist <= 2.5) {
+                        kernel[y][x] = 1.5;  // Curve
+                    }
+                }
+                // Bottom-right (should be empty for digit 2, filled for digit 0)
+                else if (x >= center + 1) {
+                    kernel[y][x] = -0.8;  // Negative for closed loop
+                }
+            }
+        }
+    }
+
+    return kernel;
+}
+
+/**
+ * @brief Create a horizontal bar detector (for distinguishing 3 vs 5)
+ * Digit 5 has a horizontal bar at top, digit 3 has curves
+ * @param size Kernel size (default 9x9)
+ * @return Kernel that responds to horizontal bars in top region
+ */
+std::vector<std::vector<double>> createHorizontalBarKernel(int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Detect horizontal bar in top region (digit 5's top bar)
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            // Top region only (upper 40%)
+            if (y <= center - 1) {
+                // Horizontal bar pattern
+                if (x >= center - 2 && x <= center + 2) {
+                    kernel[y][x] = 1.5;  // Strong positive for horizontal stroke
+                }
+                // Suppress curved patterns
+                else if (x > center + 2) {
+                    kernel[y][x] = -0.5;  // Negative for curves extending right
+                }
+            }
+        }
+    }
+
+    return kernel;
+}
+
+/**
+ * @brief Create a middle constriction detector (for distinguishing 8 vs 0)
+ * Digit 8 has a constriction in the middle (figure-8), digit 0 is uniform
+ * @param size Kernel size (default 9x9)
+ * @return Kernel that responds to middle constrictions
+ */
+std::vector<std::vector<double>> createMiddleConstrictionKernel(int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Detect constriction in middle (digit 8's waist)
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            double dy = abs(y - center);
+            double dx = abs(x - center);
+
+            // Middle horizontal band (where digit 8 constricts)
+            if (dy <= 1) {
+                // Center should be narrow (constricted)
+                if (dx <= 1) {
+                    kernel[y][x] = -1.5;  // Strong negative in center
+                }
+                // Edges should have strokes
+                else if (dx >= 2 && dx <= 3) {
+                    kernel[y][x] = 1.0;  // Positive for edges
+                }
+            }
+            // Top and bottom should be wider (loops)
+            else if (dy >= 2 && dy <= 3) {
+                if (dx >= 1 && dx <= 2) {
+                    kernel[y][x] = 0.8;  // Positive for loops
+                }
+            }
+        }
+    }
+
+    return kernel;
+}
+
+/**
  * @brief Apply Gabor filter to raw image pixels
  */
 std::vector<double> applyGaborFilter(const std::vector<uint8_t>& imagePixels,
@@ -430,15 +537,20 @@ int main(int argc, char* argv[]) {
         // - 12 orientations × 2 spatial frequencies (low + high) = 24 columns
         // - 4 center-surround scales × 2 types (ON-center + OFF-center) = 8 columns
         // - 4 blob detectors (4 scales × 2 polarities) = 8 columns
-        // - 4 specialized detectors (2 top-loop + 2 gap detectors) = 4 columns
-        // Total: 44 columns (optimized for 4→9 and 7→9 distinction)
+        // - 10 specialized detectors:
+        //   * 2 top-loop detectors (for 4→9, 7→9)
+        //   * 2 gap detectors (for 4→9)
+        //   * 2 bottom-curve detectors (for 2→0)
+        //   * 2 horizontal-bar detectors (for 3→5)
+        //   * 2 middle-constriction detectors (for 8→0)
+        // Total: 50 columns (comprehensive confusion-targeted architecture)
         const int NUM_ORIENTATIONS = 12;
         const int NUM_FREQUENCIES = 2;  // Low + High (skip medium to make room for center-surround)
         const int NUM_CS_SCALES = 4;    // Center-surround scales (added extra for loop counting)
         const int NUM_CS_TYPES = 2;     // ON-center (bright blob) + OFF-center (dark blob)
         const int NUM_BLOB_SCALES = 4;  // Blob detector scales (added extra for better localization)
         const int NUM_BLOB_TYPES = 2;   // Positive + Negative polarity
-        const int NUM_SPECIALIZED = 4;  // Top-loop and gap detectors (for 4→9, 7→9)
+        const int NUM_SPECIALIZED = 10; // Specialized confusion detectors
 
         const int NUM_ORIENTATION_COLUMNS = NUM_ORIENTATIONS * NUM_FREQUENCIES;
         const int NUM_CS_COLUMNS = NUM_CS_SCALES * NUM_CS_TYPES;
@@ -925,11 +1037,241 @@ int main(int argc, char* argv[]) {
             colIdx++;
         }
 
+        // Bottom-curve detectors (2 columns for 2→0 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "bottom_curve_detector_" + std::to_string(i);
+            col.gaborKernel = createBottomCurveKernel();
+
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Bottom-Curve Detector " << i << ") ---" << std::endl;
+
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
+
+        // Horizontal-bar detectors (2 columns for 3→5 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "horizontal_bar_detector_" + std::to_string(i);
+            col.gaborKernel = createHorizontalBarKernel();
+
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Horizontal-Bar Detector " << i << ") ---" << std::endl;
+
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
+
+        // Middle-constriction detectors (2 columns for 8→0 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "middle_constriction_detector_" + std::to_string(i);
+            col.gaborKernel = createMiddleConstrictionKernel();
+
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Middle-Constriction Detector " << i << ") ---" << std::endl;
+
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
+
         std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns:" << std::endl;
         std::cout << "  - " << NUM_ORIENTATION_COLUMNS << " orientation columns" << std::endl;
         std::cout << "  - " << NUM_CS_COLUMNS << " center-surround columns" << std::endl;
         std::cout << "  - " << NUM_BLOB_COLUMNS << " blob detector columns" << std::endl;
-        std::cout << "  - " << NUM_SPECIALIZED << " specialized detector columns (top-loop + gap)" << std::endl;
+        std::cout << "  - " << NUM_SPECIALIZED << " specialized detector columns:" << std::endl;
+        std::cout << "    * 2 top-loop detectors (4→9, 7→9)" << std::endl;
+        std::cout << "    * 2 gap detectors (4→9)" << std::endl;
+        std::cout << "    * 2 bottom-curve detectors (2→0)" << std::endl;
+        std::cout << "    * 2 horizontal-bar detectors (3→5)" << std::endl;
+        std::cout << "    * 2 middle-constriction detectors (8→0)" << std::endl;
 
         // ========================================================================
         // Create Inter-Layer Connections Within Each Column
