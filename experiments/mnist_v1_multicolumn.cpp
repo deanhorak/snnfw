@@ -384,6 +384,98 @@ std::vector<std::vector<double>> createMiddleConstrictionKernel(int size = 9) {
 }
 
 /**
+ * @brief Create a diagonal stroke detector (for distinguishing 7 vs 9)
+ * Digit 7 has a diagonal stroke from top-left to bottom-right, digit 9 has a closed loop
+ * @param size Kernel size (default 9x9)
+ * @return Kernel that responds to diagonal strokes
+ */
+std::vector<std::vector<double>> createDiagonalStrokeKernel(int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Detect diagonal stroke (top-left to bottom-right)
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            // Distance from diagonal line (y = x + offset)
+            double distFromDiagonal = abs((y - center) - (x - center));
+
+            // Strong positive along diagonal
+            if (distFromDiagonal <= 1.0) {
+                kernel[y][x] = 1.5;
+            }
+            // Negative on sides (to reject loops)
+            else if (distFromDiagonal > 1.0 && distFromDiagonal <= 2.5) {
+                kernel[y][x] = -0.6;
+            }
+        }
+    }
+
+    return kernel;
+}
+
+/**
+ * @brief Create a closed-loop detector (for distinguishing 9 vs 4, 0 vs 6)
+ * Detects complete circular/oval enclosures
+ * @param size Kernel size (default 9x9)
+ * @return Kernel that responds to closed loops
+ */
+std::vector<std::vector<double>> createClosedLoopKernel(int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Detect closed loop (ring pattern)
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            double dx = x - center;
+            double dy = y - center;
+            double dist = sqrt(dx*dx + dy*dy);
+
+            // Ring edge (positive)
+            if (dist >= 2.0 && dist <= 3.5) {
+                kernel[y][x] = 1.2;
+            }
+            // Inside hole (negative)
+            else if (dist < 2.0) {
+                kernel[y][x] = -0.8;
+            }
+            // Outside ring (slight negative to reject open shapes)
+            else if (dist > 3.5 && dist < 4.5) {
+                kernel[y][x] = -0.3;
+            }
+        }
+    }
+
+    return kernel;
+}
+
+/**
+ * @brief Create a vertical stem detector (for distinguishing 4 vs 6)
+ * Digit 4 has a vertical stem on the right, digit 6 has a closed loop
+ * @param size Kernel size (default 9x9)
+ * @return Kernel that responds to vertical stems
+ */
+std::vector<std::vector<double>> createVerticalStemKernel(int size = 9) {
+    std::vector<std::vector<double>> kernel(size, std::vector<double>(size, 0.0));
+    int center = size / 2;
+
+    // Detect vertical stem on right side
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            // Right side vertical stroke
+            if (x >= center + 1) {
+                kernel[y][x] = 1.5;  // Strong positive for vertical stem
+            }
+            // Left side should be negative (reject closed loops)
+            else if (x <= center - 2) {
+                kernel[y][x] = -0.5;
+            }
+        }
+    }
+
+    return kernel;
+}
+
+/**
  * @brief Apply Gabor filter to raw image pixels
  */
 std::vector<double> applyGaborFilter(const std::vector<uint8_t>& imagePixels,
@@ -537,20 +629,23 @@ int main(int argc, char* argv[]) {
         // - 12 orientations × 2 spatial frequencies (low + high) = 24 columns
         // - 4 center-surround scales × 2 types (ON-center + OFF-center) = 8 columns
         // - 4 blob detectors (4 scales × 2 polarities) = 8 columns
-        // - 10 specialized detectors:
+        // - 16 specialized detectors:
         //   * 2 top-loop detectors (for 4→9, 7→9)
         //   * 2 gap detectors (for 4→9)
         //   * 2 bottom-curve detectors (for 2→0)
         //   * 2 horizontal-bar detectors (for 3→5)
         //   * 2 middle-constriction detectors (for 8→0)
-        // Total: 50 columns (comprehensive confusion-targeted architecture)
+        //   * 2 diagonal-stroke detectors (for 7→9) - NEW
+        //   * 2 closed-loop detectors (for 4→9, 6→0) - NEW
+        //   * 2 vertical-stem detectors (for 4→6) - NEW
+        // Total: 56 columns (enhanced confusion-targeted architecture with lateral inhibition)
         const int NUM_ORIENTATIONS = 12;
         const int NUM_FREQUENCIES = 2;  // Low + High (skip medium to make room for center-surround)
         const int NUM_CS_SCALES = 4;    // Center-surround scales (added extra for loop counting)
         const int NUM_CS_TYPES = 2;     // ON-center (bright blob) + OFF-center (dark blob)
         const int NUM_BLOB_SCALES = 4;  // Blob detector scales (added extra for better localization)
         const int NUM_BLOB_TYPES = 2;   // Positive + Negative polarity
-        const int NUM_SPECIALIZED = 10; // Specialized confusion detectors
+        const int NUM_SPECIALIZED = 16; // Specialized confusion detectors (increased from 10)
 
         const int NUM_ORIENTATION_COLUMNS = NUM_ORIENTATIONS * NUM_FREQUENCIES;
         const int NUM_CS_COLUMNS = NUM_CS_SCALES * NUM_CS_TYPES;
@@ -1262,6 +1357,231 @@ int main(int argc, char* argv[]) {
             colIdx++;
         }
 
+        // Diagonal-stroke detectors (2 columns for 7→9 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "diagonal_stroke_detector_" + std::to_string(i);
+            col.gaborKernel = createDiagonalStrokeKernel();
+
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Diagonal-Stroke Detector " << i << ") ---" << std::endl;
+
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
+
+        // Closed-loop detectors (2 columns for 4→9, 6→0 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "closed_loop_detector_" + std::to_string(i);
+            col.gaborKernel = createClosedLoopKernel();
+
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Closed-Loop Detector " << i << ") ---" << std::endl;
+
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
+
+        // Vertical-stem detectors (2 columns for 4→6 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "vertical_stem_detector_" + std::to_string(i);
+            col.gaborKernel = createVerticalStemKernel();
+
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Vertical-Stem Detector " << i << ") ---" << std::endl;
+
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
+
         std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns:" << std::endl;
         std::cout << "  - " << NUM_ORIENTATION_COLUMNS << " orientation columns" << std::endl;
         std::cout << "  - " << NUM_CS_COLUMNS << " center-surround columns" << std::endl;
@@ -1272,6 +1592,9 @@ int main(int argc, char* argv[]) {
         std::cout << "    * 2 bottom-curve detectors (2→0)" << std::endl;
         std::cout << "    * 2 horizontal-bar detectors (3→5)" << std::endl;
         std::cout << "    * 2 middle-constriction detectors (8→0)" << std::endl;
+        std::cout << "    * 2 diagonal-stroke detectors (7→9) - NEW" << std::endl;
+        std::cout << "    * 2 closed-loop detectors (4→9, 6→0) - NEW" << std::endl;
+        std::cout << "    * 2 vertical-stem detectors (4→6) - NEW" << std::endl;
 
         // ========================================================================
         // Create Inter-Layer Connections Within Each Column
@@ -1553,12 +1876,16 @@ int main(int argc, char* argv[]) {
 
         // ========================================================================
         // Create Lateral Inter-Column Connections (Layer 2/3 ↔ Layer 2/3)
-        // Sparse connectivity between neighboring columns for horizontal integration
+        // DUAL MECHANISM:
+        // 1. Excitatory connections to similar feature detectors (same type)
+        // 2. Inhibitory connections to competing feature detectors (different types)
+        // This implements winner-take-all competition for better discrimination
         // ========================================================================
-        std::cout << "\n=== Creating Lateral Inter-Column Connections ===" << std::endl;
+        std::cout << "\n=== Creating Lateral Inter-Column Connections (Excitatory + Inhibitory) ===" << std::endl;
 
-        int lateralConnections = 0;
-        const double LATERAL_CONNECTIVITY = 0.20;  // 20% sparse connectivity (increased for better integration)
+        int lateralExcitatory = 0;
+        int lateralInhibitory = 0;
+        const double LATERAL_CONNECTIVITY = 0.15;  // 15% connectivity for each type
         const int NEIGHBOR_RANGE = 2;  // Connect to ±2 neighboring columns
 
         for (int i = 0; i < NUM_COLUMNS; ++i) {
@@ -1568,7 +1895,10 @@ int main(int argc, char* argv[]) {
 
                 int j = (i + offset + NUM_COLUMNS) % NUM_COLUMNS;
 
-                // Connect Layer 2/3 neurons between neighboring columns
+                // Determine if columns are similar (same feature type) or competing (different types)
+                bool similarFeatures = (corticalColumns[i].featureType == corticalColumns[j].featureType);
+
+                // Connect Layer 2/3 neurons between columns
                 for (auto& neuronI : corticalColumns[i].layer23Neurons) {
                     for (auto& neuronJ : corticalColumns[j].layer23Neurons) {
                         if (dis(gen) < LATERAL_CONNECTIVITY) {
@@ -1577,21 +1907,33 @@ int main(int argc, char* argv[]) {
                             neuronJ->addDendrite(dendrite->getId());
                             allDendrites.push_back(dendrite);
 
-                            // Create synapse (weak lateral)
+                            // Create synapse with weight based on feature similarity
+                            double weight;
+                            if (similarFeatures) {
+                                // Excitatory for similar features (cooperative)
+                                weight = 0.25;
+                                lateralExcitatory++;
+                            } else {
+                                // Inhibitory for different features (competitive/winner-take-all)
+                                weight = -0.25;  // Reduced from -0.4 to reduce over-suppression
+                                lateralInhibitory++;
+                            }
+
                             auto synapse = factory.createSynapse(
                                 neuronI->getAxonId(),
                                 dendrite->getId(),
-                                0.3,  // Slightly stronger lateral weight
+                                weight,
                                 1.5   // Slightly longer delay for lateral propagation
                             );
                             allSynapses.push_back(synapse);
-                            lateralConnections++;
                         }
                     }
                 }
             }
         }
-        std::cout << "✓ Created " << lateralConnections << " lateral connections between neighboring columns" << std::endl;
+        std::cout << "✓ Created lateral connections between neighboring columns:" << std::endl;
+        std::cout << "  - " << lateralExcitatory << " excitatory (similar features, cooperative)" << std::endl;
+        std::cout << "  - " << lateralInhibitory << " inhibitory (competing features, winner-take-all)" << std::endl;
         std::cout << "  Connectivity: " << (LATERAL_CONNECTIVITY * 100) << "% between ±"
                   << NEIGHBOR_RANGE << " neighboring columns" << std::endl;
 
