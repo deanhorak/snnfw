@@ -145,6 +145,7 @@ set(LIB_SOURCES
     src/NeuralObjectFactory.cpp
     src/Datastore.cpp
     src/MNISTLoader.cpp
+    src/EMNISTLoader.cpp
     src/STDPLearning.cpp
     src/HyperparameterOptimizer.cpp
     src/adapters/RetinaAdapter.cpp
@@ -342,6 +343,10 @@ target_include_directories(mnist_orientation_columns PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/external/libsonata/include
 )
+
+# EMNIST experiments
+add_executable(test_emnist_loader experiments/test_emnist_loader.cpp)
+target_link_libraries(test_emnist_loader ${PROJECT_NAME})
 
 # Analysis tools
 add_executable(analyze_network_stats tools/analyze_network_stats.cpp)
