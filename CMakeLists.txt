@@ -315,6 +315,27 @@ target_include_directories(mnist_v1_multicolumn PRIVATE
     ${CMAKE_SOURCE_DIR}/external/libsonata/include
 )
 
+add_executable(mnist_v1_optimized experiments/mnist_v1_optimized.cpp)
+target_link_libraries(mnist_v1_optimized ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
+target_include_directories(mnist_v1_optimized PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external/libsonata/include
+)
+
+add_executable(mnist_v1_24col experiments/mnist_v1_24col.cpp)
+target_link_libraries(mnist_v1_24col ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
+target_include_directories(mnist_v1_24col PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external/libsonata/include
+)
+
+add_executable(mnist_v1_32col experiments/mnist_v1_32col.cpp)
+target_link_libraries(mnist_v1_32col ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
+target_include_directories(mnist_v1_32col PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/external/libsonata/include
+)
+
 add_executable(mnist_orientation_columns experiments/mnist_orientation_columns.cpp)
 target_link_libraries(mnist_orientation_columns ${PROJECT_NAME} sonata::sonata_shared HighFive CURL::libcurl OpenMP::OpenMP_CXX)
 target_include_directories(mnist_orientation_columns PRIVATE
