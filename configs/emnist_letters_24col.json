@@ -21,9 +21,9 @@
   },
   "architecture": {
     "columns": {
-      "num_orientations": 4,
+      "num_orientations": 6,
       "num_frequencies": 2,
-      "num_center_surround_scales": 2,
+      "num_center_surround_scales": 3,
       "num_center_surround_types": 2,
       "num_blob_scales": 0,
       "num_blob_types": 0,

@@ -23,24 +23,24 @@
     "columns": {
       "num_orientations": 4,
       "num_frequencies": 2,
-      "num_center_surround_scales": 2,
+      "num_center_surround_scales": 0,
       "num_center_surround_types": 2,
       "num_blob_scales": 0,
       "num_blob_types": 0,
-      "num_specialized_detectors": 4
+      "num_specialized_detectors": 0
     },
     "layers": {
       "layer1_neurons": 32,
-      "layer23_neurons": 256,
-      "layer4_size": 8,
-      "layer5_neurons": 64,
+      "layer23_neurons": 128,
+      "layer4_size": 7,
+      "layer5_neurons": 49,
       "layer6_neurons": 32
     },
     "connectivity": {
-      "lateral_connectivity": 0.2,
-      "neighbor_range": 2,
-      "recurrent_connectivity": 0.15,
-      "recurrent_weight": 0.4,
+      "lateral_connectivity": 0.15,
+      "neighbor_range": 1,
+      "recurrent_connectivity": 0.1,
+      "recurrent_weight": 0.3,
       "recurrent_delay": 2.0
     },
     "gabor": {
@@ -49,7 +49,7 @@
       "threshold": 0.1
     },
     "output": {
-      "neurons_per_class": 20
+      "neurons_per_class": 15
     }
   }
 }

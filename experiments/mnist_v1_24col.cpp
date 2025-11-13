@@ -1,10 +1,13 @@
 /**
- * @file emnist_letters_v1.cpp
- * @brief EMNIST Letters classification using multi-column hierarchical V1 architecture
+ * @file mnist_v1_24col.cpp
+ * @brief MNIST classification using 24-column balanced V1 architecture
  *
- * Architecture:
- * - 16 cortical columns (orientation-selective + center-surround + specialized)
- * - Each column has 6 layers following canonical cortical microcircuit:
+ * Architecture (24 columns - balanced speed/accuracy):
+ * - 12 orientation columns (6 orientations × 2 frequencies)
+ * - 6 center-surround columns (3 scales × 2 types)
+ * - 6 specialized detector columns (top-loop, gap, bottom-curve)
+ *
+ * Each column has 6 layers following canonical cortical microcircuit:
  *   - Layer 1: Apical dendrites, modulatory inputs
  *   - Layer 2/3: Superficial pyramidal neurons, lateral connections
  *   - Layer 4: Granular input layer (receives thalamic/sensory input)
@@ -15,9 +18,7 @@
  *   Input → Layer 4 → Layer 2/3 → Layer 5 → Layer 6 → (feedback to Layer 4)
  *   Layer 1 receives modulatory/contextual input from higher areas
  *
- * Dataset: EMNIST Letters (26 classes: A-Z)
- * - Training: 124,800 images (26 letters × ~4,800 each)
- * - Testing: 20,800 images (26 letters × 800 each)
+ * Target: ~11K neurons, ~800K synapses (50% more than 16-col, 52% less than 50-col)
  */
 
 #include <iostream>
@@ -48,125 +49,33 @@
 #include "snnfw/NetworkPropagator.h"
 #include "snnfw/SpikeProcessor.h"
 #include "snnfw/ConfigLoader.h"
-#include "snnfw/EMNISTLoader.h"
+#include "snnfw/MNISTLoader.h"
 
 using namespace snnfw;
 
 // Configuration structure
 struct MultiColumnConfig {
-    // Neuron parameters
     double neuronWindow;
     double neuronThreshold;
     int neuronMaxPatterns;
-
-    // Training parameters
-    int trainingExamplesPerLetter;
+    int trainingExamplesPerDigit;
     int testImages;
-
-    // Data paths
     std::string trainImagesPath;
     std::string trainLabelsPath;
     std::string testImagesPath;
     std::string testLabelsPath;
 
-    // Architecture parameters - Column counts
-    int numOrientations;
-    int numFrequencies;
-    int numCenterSurroundScales;
-    int numCenterSurroundTypes;
-    int numBlobScales;
-    int numBlobTypes;
-    int numSpecializedDetectors;
-
-    // Architecture parameters - Layer sizes
-    int layer1Neurons;
-    int layer23Neurons;
-    int layer4Size;  // Grid size (e.g., 8 means 8x8 = 64 neurons)
-    int layer5Neurons;
-    int layer6Neurons;
-
-    // Architecture parameters - Connectivity
-    double lateralConnectivity;
-    int neighborRange;
-    double recurrentConnectivity;
-    double recurrentWeight;
-    double recurrentDelay;
-
-    // Architecture parameters - Gabor filters
-    double freqLow;
-    double freqHigh;
-    double gaborThreshold;
-
-    // Architecture parameters - Center-surround
-    std::vector<std::pair<double, double>> centerSurroundParams;  // (centerSigma, surroundSigma) pairs
-
-    // Architecture parameters - Blob detectors
-    std::vector<double> blobSigmas;
-
-    // Output layer parameters
-    int neuronsPerClass;
-
     static MultiColumnConfig fromConfigLoader(const ConfigLoader& loader) {
         MultiColumnConfig config;
-
-        // Neuron parameters
         config.neuronWindow = loader.get<double>("/neuron/window_size_ms", 200.0);
         config.neuronThreshold = loader.get<double>("/neuron/similarity_threshold", 0.90);
         config.neuronMaxPatterns = loader.get<int>("/neuron/max_patterns", 100);
-
-        // Training parameters
-        config.trainingExamplesPerLetter = loader.get<int>("/training/examples_per_letter", 800);
-        config.testImages = loader.get<int>("/training/test_images", 20800);
-
-        // Data paths
+        config.trainingExamplesPerDigit = loader.get<int>("/training/examples_per_digit", 500);
+        config.testImages = loader.get<int>("/training/test_images", 1000);
         config.trainImagesPath = loader.getRequired<std::string>("/data/train_images");
         config.trainLabelsPath = loader.getRequired<std::string>("/data/train_labels");
         config.testImagesPath = loader.getRequired<std::string>("/data/test_images");
         config.testLabelsPath = loader.getRequired<std::string>("/data/test_labels");
-
-        // Architecture parameters - Column counts
-        config.numOrientations = loader.get<int>("/architecture/columns/num_orientations", 4);
-        config.numFrequencies = loader.get<int>("/architecture/columns/num_frequencies", 2);
-        config.numCenterSurroundScales = loader.get<int>("/architecture/columns/num_center_surround_scales", 2);
-        config.numCenterSurroundTypes = loader.get<int>("/architecture/columns/num_center_surround_types", 2);
-        config.numBlobScales = loader.get<int>("/architecture/columns/num_blob_scales", 0);
-        config.numBlobTypes = loader.get<int>("/architecture/columns/num_blob_types", 0);
-        config.numSpecializedDetectors = loader.get<int>("/architecture/columns/num_specialized_detectors", 4);
-
-        // Architecture parameters - Layer sizes
-        config.layer1Neurons = loader.get<int>("/architecture/layers/layer1_neurons", 32);
-        config.layer23Neurons = loader.get<int>("/architecture/layers/layer23_neurons", 256);
-        config.layer4Size = loader.get<int>("/architecture/layers/layer4_size", 8);
-        config.layer5Neurons = loader.get<int>("/architecture/layers/layer5_neurons", 64);
-        config.layer6Neurons = loader.get<int>("/architecture/layers/layer6_neurons", 32);
-
-        // Architecture parameters - Connectivity
-        config.lateralConnectivity = loader.get<double>("/architecture/connectivity/lateral_connectivity", 0.20);
-        config.neighborRange = loader.get<int>("/architecture/connectivity/neighbor_range", 2);
-        config.recurrentConnectivity = loader.get<double>("/architecture/connectivity/recurrent_connectivity", 0.15);
-        config.recurrentWeight = loader.get<double>("/architecture/connectivity/recurrent_weight", 0.4);
-        config.recurrentDelay = loader.get<double>("/architecture/connectivity/recurrent_delay", 2.0);
-
-        // Architecture parameters - Gabor filters
-        config.freqLow = loader.get<double>("/architecture/gabor/freq_low", 8.0);
-        config.freqHigh = loader.get<double>("/architecture/gabor/freq_high", 3.0);
-        config.gaborThreshold = loader.get<double>("/architecture/gabor/threshold", 0.1);
-
-        // Architecture parameters - Center-surround (default: small and medium scales)
-        // Format: [[centerSigma1, surroundSigma1], [centerSigma2, surroundSigma2], ...]
-        config.centerSurroundParams = {
-            {1.2, 3.5},  // Small scale
-            {2.0, 5.0}   // Medium scale
-        };
-        // TODO: Add JSON array parsing for center_surround_params when needed
-
-        // Architecture parameters - Blob detectors (default: empty)
-        config.blobSigmas = {};
-        // TODO: Add JSON array parsing for blob_sigmas when needed
-
-        // Output layer parameters
-        config.neuronsPerClass = loader.get<int>("/architecture/output/neurons_per_class", 20);
-
         return config;
     }
 };
@@ -591,7 +500,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  Neuron window: " << config.neuronWindow << " ms" << std::endl;
         std::cout << "  Similarity threshold: " << config.neuronThreshold << std::endl;
         std::cout << "  Max patterns per neuron: " << config.neuronMaxPatterns << std::endl;
-        std::cout << "  Training examples per letter: " << config.trainingExamplesPerLetter << std::endl;
+        std::cout << "  Training examples per digit: " << config.trainingExamplesPerDigit << std::endl;
         std::cout << "  Test images: " << config.testImages << std::endl;
 
         // Extract neuron parameters for convenience
@@ -627,14 +536,23 @@ int main(int argc, char* argv[]) {
         v1Region->addNucleus(v1Nucleus->getId());
         std::cout << "✓ Created Nucleus: " << v1Nucleus->getName() << std::endl;
         
-        // Architecture parameters from config
-        const int NUM_ORIENTATIONS = config.numOrientations;
-        const int NUM_FREQUENCIES = config.numFrequencies;
-        const int NUM_CS_SCALES = config.numCenterSurroundScales;
-        const int NUM_CS_TYPES = config.numCenterSurroundTypes;
-        const int NUM_BLOB_SCALES = config.numBlobScales;
-        const int NUM_BLOB_TYPES = config.numBlobTypes;
-        const int NUM_SPECIALIZED = config.numSpecializedDetectors;
+        // 24-COLUMN Architecture (balanced speed/accuracy):
+        // - 6 orientations × 2 spatial frequencies (low + high) = 12 columns
+        // - 3 center-surround scales × 2 types (ON-center + OFF-center) = 6 columns
+        // - 0 blob detectors (removed for speed)
+        // - 6 specialized detectors:
+        //   * 2 top-loop detectors (for 4→9, 7→9)
+        //   * 2 gap detectors (for 4→9)
+        //   * 2 bottom-curve detectors (for 2→0)
+        // Total: 24 columns (50% more than optimized, 52% less than baseline)
+        // Target: ~11K neurons, ~800K synapses (balanced approach)
+        const int NUM_ORIENTATIONS = 6;  // 0°, 30°, 60°, 90°, 120°, 150°
+        const int NUM_FREQUENCIES = 2;   // Low + High
+        const int NUM_CS_SCALES = 3;     // Small, medium, large
+        const int NUM_CS_TYPES = 2;      // ON-center + OFF-center
+        const int NUM_BLOB_SCALES = 0;   // Removed for speed
+        const int NUM_BLOB_TYPES = 0;    // Removed for speed
+        const int NUM_SPECIALIZED = 6;   // Top-loop (2), gap (2), bottom-curve (2)
 
         const int NUM_ORIENTATION_COLUMNS = NUM_ORIENTATIONS * NUM_FREQUENCIES;
         const int NUM_CS_COLUMNS = NUM_CS_SCALES * NUM_CS_TYPES;
@@ -643,30 +561,33 @@ int main(int argc, char* argv[]) {
         const double ORIENTATION_STEP = 180.0 / NUM_ORIENTATIONS;
 
         // Spatial frequency channels (lambda values)
-        const double FREQ_LOW = config.freqLow;
-        const double FREQ_HIGH = config.freqHigh;
+        const double FREQ_LOW = 8.0;     // Low frequency: thick strokes, overall shape
+        const double FREQ_HIGH = 3.0;    // High frequency: fine details, thin strokes
 
         const std::vector<double> SPATIAL_FREQUENCIES = {FREQ_LOW, FREQ_HIGH};
         const std::vector<std::string> FREQ_NAMES = {"low_freq", "high_freq"};
 
-        // Center-surround parameters from config
-        const std::vector<std::pair<double, double>> CS_PARAMS = config.centerSurroundParams;
-        const std::vector<std::string> CS_SCALE_NAMES = {"small", "medium", "large", "xlarge"};
+        // Center-surround parameters (for loop/hole detection) - 24-COLUMN
+        // 3 scales for better feature detection
+        const std::vector<std::pair<double, double>> CS_PARAMS = {
+            {1.2, 3.5},  // Small: digit 8 individual loops, digit 4 open top
+            {2.0, 5.0},  // Medium: digit 0 loop, digit 8 combined loops
+            {3.0, 7.0}   // Large: digit 0 outer loop, digit 6 full loop
+        };
+        const std::vector<std::string> CS_SCALE_NAMES = {"small", "medium", "large"};
         const std::vector<std::string> CS_TYPE_NAMES = {"ON_center", "OFF_center"};
 
-        // Blob detector parameters from config
-        const std::vector<double> BLOB_SIGMAS = config.blobSigmas;
-        std::vector<std::string> BLOB_SCALE_NAMES;
-        for (size_t i = 0; i < BLOB_SIGMAS.size(); ++i) {
-            BLOB_SCALE_NAMES.push_back("scale_" + std::to_string(i));
-        }
+        // Blob detector parameters - REMOVED FOR SPEED
+        const std::vector<double> BLOB_SIGMAS = {};  // Removed
+        const std::vector<std::string> BLOB_SCALE_NAMES = {};
 
-        // Neuron counts per layer from config
-        const int LAYER1_NEURONS = config.layer1Neurons;
-        const int LAYER23_NEURONS = config.layer23Neurons;
-        const int LAYER4_SIZE = config.layer4Size;
-        const int LAYER5_NEURONS = config.layer5Neurons;
-        const int LAYER6_NEURONS = config.layer6Neurons;
+        // Neuron counts per layer (OPTIMAL CONFIGURATION)
+        // After systematic testing, L2/3 = 256 achieves best accuracy (70.63%)
+        const int LAYER1_NEURONS = 32;    // Modulatory
+        const int LAYER23_NEURONS = 256;  // Superficial pyramidal (integration) - OPTIMAL: 256
+        const int LAYER4_SIZE = 8;        // Grid size for Layer 4 (8x8 = 64 neurons)
+        const int LAYER5_NEURONS = 64;    // Deep pyramidal (output)
+        const int LAYER6_NEURONS = 32;    // Corticothalamic feedback
 
         std::vector<CorticalColumn> corticalColumns;
 
@@ -1114,16 +1035,92 @@ int main(int argc, char* argv[]) {
             colIdx++;
         }
 
-        // REMOVED: Bottom-curve, horizontal-bar, and middle-constriction detectors for speed optimization
+        // Bottom-curve detectors (2 columns for 2→0 distinction)
+        for (int i = 0; i < 2; ++i) {
+            CorticalColumn col;
+            col.orientation = 0.0;
+            col.spatialFrequency = 0.0;
+            col.featureType = "bottom_curve_detector_" + std::to_string(i);
+            col.gaborKernel = createBottomCurveKernel();
+
+            // Apply different scaling for sensitivity variation
+            if (i == 1) {
+                for (auto& row : col.gaborKernel) {
+                    for (auto& val : row) {
+                        val *= 1.3;  // More sensitive version
+                    }
+                }
+            }
+
+            col.column = factory.createColumn();
+            v1Nucleus->addColumn(col.column->getId());
+
+            std::cout << "\n--- Column " << colIdx << " (Bottom-Curve Detector " << i << ") ---" << std::endl;
+
+            // Create layers (same structure)
+            col.layer1 = factory.createLayer();
+            col.column->addLayer(col.layer1->getId());
+            auto layer1Cluster = factory.createCluster();
+            col.layer1->addCluster(layer1Cluster->getId());
+            for (int j = 0; j < LAYER1_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer1Neurons.push_back(neuron);
+                layer1Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer23 = factory.createLayer();
+            col.column->addLayer(col.layer23->getId());
+            auto layer23Cluster = factory.createCluster();
+            col.layer23->addCluster(layer23Cluster->getId());
+            for (int j = 0; j < LAYER23_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer23Neurons.push_back(neuron);
+                layer23Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer4 = factory.createLayer();
+            col.column->addLayer(col.layer4->getId());
+            auto layer4Cluster = factory.createCluster();
+            col.layer4->addCluster(layer4Cluster->getId());
+            for (int j = 0; j < LAYER4_SIZE * LAYER4_SIZE; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer4Neurons.push_back(neuron);
+                layer4Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer5 = factory.createLayer();
+            col.column->addLayer(col.layer5->getId());
+            auto layer5Cluster = factory.createCluster();
+            col.layer5->addCluster(layer5Cluster->getId());
+            for (int j = 0; j < LAYER5_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer5Neurons.push_back(neuron);
+                layer5Cluster->addNeuron(neuron->getId());
+            }
+
+            col.layer6 = factory.createLayer();
+            col.column->addLayer(col.layer6->getId());
+            auto layer6Cluster = factory.createCluster();
+            col.layer6->addCluster(layer6Cluster->getId());
+            for (int j = 0; j < LAYER6_NEURONS; ++j) {
+                auto neuron = factory.createNeuron(config.neuronWindow, config.neuronThreshold, config.neuronMaxPatterns);
+                col.layer6Neurons.push_back(neuron);
+                layer6Cluster->addNeuron(neuron->getId());
+            }
+
+            corticalColumns.push_back(col);
+            colIdx++;
+        }
         // Keeping only top-loop and gap detectors (most important for 4→9, 7→9 distinction)
 
-        std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns (OPTIMIZED):" << std::endl;
-        std::cout << "  - " << NUM_ORIENTATION_COLUMNS << " orientation columns (4 orientations × 2 frequencies)" << std::endl;
-        std::cout << "  - " << NUM_CS_COLUMNS << " center-surround columns (2 scales × 2 types)" << std::endl;
+        std::cout << "\n✓ Created " << NUM_COLUMNS << " cortical columns (24-COLUMN BALANCED):" << std::endl;
+        std::cout << "  - " << NUM_ORIENTATION_COLUMNS << " orientation columns (6 orientations × 2 frequencies)" << std::endl;
+        std::cout << "  - " << NUM_CS_COLUMNS << " center-surround columns (3 scales × 2 types)" << std::endl;
         std::cout << "  - " << NUM_BLOB_COLUMNS << " blob detector columns (removed for speed)" << std::endl;
         std::cout << "  - " << NUM_SPECIALIZED << " specialized detector columns:" << std::endl;
         std::cout << "    * 2 top-loop detectors (4→9, 7→9)" << std::endl;
         std::cout << "    * 2 gap detectors (4→9)" << std::endl;
+        std::cout << "    * 2 bottom-curve detectors (2→0)" << std::endl;
 
         // ========================================================================
         // Create Inter-Layer Connections Within Each Column
@@ -1410,8 +1407,8 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Creating Lateral Inter-Column Connections ===" << std::endl;
 
         int lateralConnections = 0;
-        const double LATERAL_CONNECTIVITY = config.lateralConnectivity;
-        const int NEIGHBOR_RANGE = config.neighborRange;
+        const double LATERAL_CONNECTIVITY = 0.20;  // 20% sparse connectivity (increased for better integration)
+        const int NEIGHBOR_RANGE = 2;  // Connect to ±2 neighboring columns
 
         for (int i = 0; i < NUM_COLUMNS; ++i) {
             // Connect to neighboring columns (wrap around for circular topology)
@@ -1454,9 +1451,9 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Creating Recurrent Connections Within Layer 2/3 ===" << std::endl;
 
         int recurrentConnections = 0;
-        const double RECURRENT_CONNECTIVITY = config.recurrentConnectivity;
-        const double RECURRENT_WEIGHT = config.recurrentWeight;
-        const double RECURRENT_DELAY = config.recurrentDelay;
+        const double RECURRENT_CONNECTIVITY = 0.15;  // 15% sparse recurrent connectivity
+        const double RECURRENT_WEIGHT = 0.4;  // Moderate weight for temporal integration
+        const double RECURRENT_DELAY = 2.0;  // 2ms delay for recurrent feedback
 
         for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
             auto& col = corticalColumns[colIdx];
@@ -1523,11 +1520,11 @@ int main(int argc, char* argv[]) {
         std::cout << "\n✓ Multi-column architecture with full connectivity created successfully!" << std::endl;
 
         // ========================================================================
-        // Load EMNIST Letters Data and Test Architecture
+        // Load MNIST Data and Test Architecture
         // ========================================================================
-        std::cout << "\n=== Loading EMNIST Letters Data ===" << std::endl;
+        std::cout << "\n=== Loading MNIST Data ===" << std::endl;
 
-        EMNISTLoader trainLoader(EMNISTLoader::Variant::LETTERS);
+        MNISTLoader trainLoader;
         if (!trainLoader.load(config.trainImagesPath, config.trainLabelsPath)) {
             std::cerr << "Failed to load training data" << std::endl;
             return 1;
@@ -1602,7 +1599,7 @@ int main(int argc, char* argv[]) {
                 // Fire Layer 4 neurons based on Gabor response
                 int firedCount = 0;
                 for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
-                    if (gaborResponse[neuronIdx] > config.gaborThreshold) {
+                    if (gaborResponse[neuronIdx] > 0.1) {  // Threshold
                         double firingTime = currentTime + (1.0 - gaborResponse[neuronIdx]) * 10.0;
                         col.layer4Neurons[neuronIdx]->fireSignature(firingTime);
                         networkPropagator->fireNeuron(col.layer4Neurons[neuronIdx]->getId(), firingTime);
@@ -1635,27 +1632,26 @@ int main(int argc, char* argv[]) {
         auto outputLayer = factory.createLayer();
         outputColumn->addLayer(outputLayer->getId());
 
-        const int NUM_LETTERS = 26;  // A-Z
-        const int NEURONS_PER_LETTER = config.neuronsPerClass;
+        const int NEURONS_PER_DIGIT = 20;  // Increased from 10 for better representation
         std::vector<std::vector<std::shared_ptr<Neuron>>> outputPopulations;
 
-        for (int letter = 0; letter < NUM_LETTERS; ++letter) {
-            auto letterCluster = factory.createCluster();
-            outputLayer->addCluster(letterCluster->getId());
+        for (int digit = 0; digit < 10; ++digit) {
+            auto digitCluster = factory.createCluster();
+            outputLayer->addCluster(digitCluster->getId());
 
             std::vector<std::shared_ptr<Neuron>> population;
-            for (int i = 0; i < NEURONS_PER_LETTER; ++i) {
+            for (int i = 0; i < NEURONS_PER_DIGIT; ++i) {
                 auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
                 neuron->setSimilarityMetric(SimilarityMetric::HISTOGRAM);
                 population.push_back(neuron);
-                letterCluster->addNeuron(neuron->getId());
+                digitCluster->addNeuron(neuron->getId());
                 allNeurons.push_back(neuron);
             }
             outputPopulations.push_back(population);
         }
 
-        std::cout << "✓ Created output layer: " << (NUM_LETTERS * NEURONS_PER_LETTER) << " neurons ("
-                  << NEURONS_PER_LETTER << " per letter)" << std::endl;
+        std::cout << "✓ Created output layer: " << (10 * NEURONS_PER_DIGIT) << " neurons ("
+                  << NEURONS_PER_DIGIT << " per digit)" << std::endl;
 
         // Connect Layer 5 neurons from all columns to output layer
         std::cout << "\n=== Connecting Layer 5 to Output Layer ===" << std::endl;
@@ -1728,14 +1724,14 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "\n=== Training Phase ===" << std::endl;
 
-        // Select training images (balanced across letters)
+        // Select training images (balanced across digits)
         std::vector<size_t> trainingIndices;
-        std::vector<int> trainCount(NUM_LETTERS, 0);
-        int trainPerLetter = config.trainingExamplesPerLetter;
+        std::vector<int> trainCount(10, 0);
+        int trainPerDigit = config.trainingExamplesPerDigit;
 
         for (size_t i = 0; i < trainLoader.size(); ++i) {
-            int label = trainLoader.getImage(i).label - 1;  // EMNIST labels are 1-26, convert to 0-25
-            if (label >= 0 && label < NUM_LETTERS && trainCount[label] < trainPerLetter) {
+            int label = trainLoader.getImage(i).label;
+            if (trainCount[label] < trainPerDigit) {
                 trainingIndices.push_back(i);
                 trainCount[label]++;
             }
@@ -1748,13 +1744,12 @@ int main(int argc, char* argv[]) {
 
         for (size_t idx = 0; idx < trainingIndices.size(); ++idx) {
             size_t i = trainingIndices[idx];
-            const auto& emnistImg = trainLoader.getImage(i);
-            int label = emnistImg.label - 1;  // EMNIST labels are 1-26, convert to 0-25
-            char letterLabel = emnistImg.getCharLabel();  // Get 'A'-'Z'
+            const auto& mnistImg = trainLoader.getImage(i);
+            int label = mnistImg.label;
 
             if (idx % 100 == 0) {
                 std::cout << "  Processing training image " << idx << "/" << trainingIndices.size()
-                          << " (label=" << letterLabel << ")" << std::endl;
+                          << " (label=" << label << ")" << std::endl;
             }
 
             // Clear all spike buffers
@@ -1779,7 +1774,7 @@ int main(int argc, char* argv[]) {
             auto processColumnBatch = [&](int startCol, int endCol) {
                 for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
                     auto& col = corticalColumns[colIdx];
-                    auto gaborResponse = applyGaborFilter(emnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+                    auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
 
                     // Collect active Layer 4 neurons and calculate column strength
                     for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
@@ -1858,7 +1853,7 @@ int main(int argc, char* argv[]) {
                 layer5Neurons.insert(layer5Neurons.end(), col.layer5Neurons.begin(), col.layer5Neurons.end());
             }
 
-            // Supervised learning: teach output neuron for this letter
+            // Supervised learning: teach output neuron for this digit
             int neuronIndex = idx % outputPopulations[label].size();
             auto& targetNeuron = outputPopulations[label][neuronIndex];
 
@@ -1884,9 +1879,8 @@ int main(int argc, char* argv[]) {
 
         std::cout << "✓ Training complete in " << std::fixed << std::setprecision(1)
                   << trainTime << "s" << std::endl;
-        for (int l = 0; l < NUM_LETTERS; ++l) {
-            char letter = 'A' + l;
-            std::cout << "  Letter " << letter << ": " << trainCount[l] << " patterns" << std::endl;
+        for (int d = 0; d < 10; ++d) {
+            std::cout << "  Digit " << d << ": " << trainCount[d] << " patterns" << std::endl;
         }
 
         // ========================================================================
@@ -1894,7 +1888,7 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "\n=== Loading Test Data ===" << std::endl;
 
-        EMNISTLoader testLoader(EMNISTLoader::Variant::LETTERS);
+        MNISTLoader testLoader;
         if (!testLoader.load(config.testImagesPath, config.testLabelsPath)) {
             std::cerr << "Failed to load test data" << std::endl;
             return 1;
@@ -1902,76 +1896,25 @@ int main(int argc, char* argv[]) {
         std::cout << "✓ Loaded " << testLoader.size() << " test images" << std::endl;
 
         // ========================================================================
-        // Pre-compute Gabor Responses (CACHING OPTIMIZATION)
-        // ========================================================================
-        std::cout << "\n=== Pre-computing Gabor Responses ===" << std::endl;
-
-        size_t numTestImages = std::min((size_t)config.testImages, testLoader.size());
-
-        // Cache structure: gaborCache[imageIdx][columnIdx] = vector of responses
-        std::vector<std::vector<std::vector<double>>> gaborCache(numTestImages);
-
-        auto cacheStart = std::chrono::steady_clock::now();
-
-        // Parallelize across images
-        const int numCacheThreads = std::min(24, (int)numTestImages);
-        std::vector<std::future<void>> cacheFutures;
-
-        auto cacheImageBatch = [&](size_t startImg, size_t endImg) {
-            for (size_t imgIdx = startImg; imgIdx < endImg; ++imgIdx) {
-                const auto& emnistImg = testLoader.getImage(imgIdx);
-                gaborCache[imgIdx].resize(NUM_COLUMNS);
-
-                for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                    auto& col = corticalColumns[colIdx];
-                    gaborCache[imgIdx][colIdx] = applyGaborFilter(emnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
-                }
-            }
-        };
-
-        // Divide images among threads
-        size_t imgsPerThread = (numTestImages + numCacheThreads - 1) / numCacheThreads;
-        for (int t = 0; t < numCacheThreads; ++t) {
-            size_t startImg = t * imgsPerThread;
-            size_t endImg = std::min(startImg + imgsPerThread, numTestImages);
-            if (startImg < numTestImages) {
-                cacheFutures.push_back(std::async(std::launch::async, cacheImageBatch, startImg, endImg));
-            }
-        }
-
-        // Wait for all caching to complete
-        for (auto& f : cacheFutures) {
-            f.get();
-        }
-
-        auto cacheEnd = std::chrono::steady_clock::now();
-        double cacheTime = std::chrono::duration<double>(cacheEnd - cacheStart).count();
-
-        // Calculate cache size
-        size_t cacheSize = numTestImages * NUM_COLUMNS * LAYER4_SIZE * LAYER4_SIZE * sizeof(double);
-        std::cout << "✓ Pre-computed Gabor responses for " << numTestImages << " images" << std::endl;
-        std::cout << "  Cache time: " << cacheTime << "s" << std::endl;
-        std::cout << "  Cache size: " << (cacheSize / 1024 / 1024) << " MB" << std::endl;
-
-        // ========================================================================
         // Testing Phase
         // ========================================================================
         std::cout << "\n=== Testing Phase ===" << std::endl;
         std::cout << "  Using output layer population activations for classification" << std::endl;
-        std::cout << "  Using cached Gabor responses (no re-computation)" << std::endl;
 
         auto testStart = std::chrono::steady_clock::now();
 
         int correct = 0;
-        std::vector<int> perLetterCorrect(NUM_LETTERS, 0);
-        std::vector<int> perLetterTotal(NUM_LETTERS, 0);
+        std::vector<int> perDigitCorrect(10, 0);
+        std::vector<int> perDigitTotal(10, 0);
 
         // Confusion matrix: confusionMatrix[true][predicted]
-        std::vector<std::vector<int>> confusionMatrix(NUM_LETTERS, std::vector<int>(NUM_LETTERS, 0));
+        std::vector<std::vector<int>> confusionMatrix(10, std::vector<int>(10, 0));
+
+        size_t numTestImages = std::min((size_t)config.testImages, testLoader.size());
 
         for (size_t i = 0; i < numTestImages; ++i) {
-            const auto& emnistImg = testLoader.getImage(i);
-            int trueLabel = emnistImg.label - 1;  // EMNIST labels are 1-26, convert to 0-25
+            const auto& mnistImg = testLoader.getImage(i);
+            int trueLabel = mnistImg.label;
 
             if (i % 100 == 0) {
                 std::cout << "  Testing image " << i << "/" << numTestImages << std::endl;
@@ -1988,21 +1931,41 @@ int main(int argc, char* argv[]) {
             // Also fire Layer 5 neurons based on Layer 4 activity
             std::vector<std::shared_ptr<Neuron>> layer5Neurons;
 
-            // First pass: Calculate column strengths using CACHED Gabor responses
+            // First pass: Calculate column strengths (PARALLELIZED)
             std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
             std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
 
-            // Use cached Gabor responses (no re-computation!)
-            for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                auto& col = corticalColumns[colIdx];
-                const auto& gaborResponse = gaborCache[i][colIdx];  // Cache lookup
+            // Parallelize Gabor filter application across columns
+            const int numThreads = std::min(24, NUM_COLUMNS);
+            std::vector<std::future<void>> futures;
 
-                for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
-                    if (gaborResponse[neuronIdx] > 0.1) {
-                        columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
-                        columnStrengths[colIdx] += gaborResponse[neuronIdx];
+            auto processColumnBatch = [&](int startCol, int endCol) {
+                for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
+                    auto& col = corticalColumns[colIdx];
+                    auto gaborResponse = applyGaborFilter(mnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+
+                    for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
+                        if (gaborResponse[neuronIdx] > 0.1) {
+                            columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
+                            columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                        }
                     }
                 }
+            };
+
+            // Divide columns among threads
+            int colsPerThread = (NUM_COLUMNS + numThreads - 1) / numThreads;
+            for (int t = 0; t < numThreads; ++t) {
+                int startCol = t * colsPerThread;
+                int endCol = std::min(startCol + colsPerThread, NUM_COLUMNS);
+                if (startCol < NUM_COLUMNS) {
+                    futures.push_back(std::async(std::launch::async, processColumnBatch, startCol, endCol));
+                }
+            }
+
+            // Wait for all threads to complete
+            for (auto& f : futures) {
+                f.get();
             }
 
             // Calculate mean column strength
@@ -2053,36 +2016,36 @@ int main(int argc, char* argv[]) {
             }
 
             // Copy Layer 5 spike pattern to ALL output populations for pattern matching
-            for (int letter = 0; letter < NUM_LETTERS; ++letter) {
-                copyLayerSpikePattern(layer5Neurons, outputPopulations[letter]);
+            for (int digit = 0; digit < 10; ++digit) {
+                copyLayerSpikePattern(layer5Neurons, outputPopulations[digit]);
             }
 
             // Get population activations (average across each population)
-            std::vector<double> populationActivations(NUM_LETTERS, 0.0);
-            for (int letter = 0; letter < NUM_LETTERS; ++letter) {
+            std::vector<double> populationActivations(10, 0.0);
+            for (int digit = 0; digit < 10; ++digit) {
                 double totalActivation = 0.0;
-                for (const auto& neuron : outputPopulations[letter]) {
+                for (const auto& neuron : outputPopulations[digit]) {
                     totalActivation += neuron->getActivation();
                 }
-                populationActivations[letter] = totalActivation / outputPopulations[letter].size();
+                populationActivations[digit] = totalActivation / outputPopulations[digit].size();
             }
 
             // Classify based on highest population activation
             int predicted = 0;
             double maxActivation = populationActivations[0];
-            for (int l = 1; l < NUM_LETTERS; ++l) {
-                if (populationActivations[l] > maxActivation) {
-                    maxActivation = populationActivations[l];
-                    predicted = l;
+            for (int d = 1; d < 10; ++d) {
+                if (populationActivations[d] > maxActivation) {
+                    maxActivation = populationActivations[d];
+                    predicted = d;
                 }
             }
 
             // Update statistics
-            perLetterTotal[trueLabel]++;
+            perDigitTotal[trueLabel]++;
             confusionMatrix[trueLabel][predicted]++;
             if (predicted == trueLabel) {
                 correct++;
-                perLetterCorrect[trueLabel]++;
+                perDigitCorrect[trueLabel]++;
             }
 
             // Advance time
@@ -2096,34 +2059,47 @@ int main(int argc, char* argv[]) {
         // Results
         // ========================================================================
         std::cout << "\n=== Results ===" << std::endl;
-        std::cout << "  Cache time: " << std::fixed << std::setprecision(1) << cacheTime << "s (one-time pre-computation)" << std::endl;
-        std::cout << "  Test time: " << std::fixed << std::setprecision(1) << testTime << "s (classification only)" << std::endl;
-        std::cout << "  Total test time: " << std::fixed << std::setprecision(1) << (cacheTime + testTime) << "s" << std::endl;
+        std::cout << "  Test time: " << std::fixed << std::setprecision(1) << testTime << "s" << std::endl;
         std::cout << "  Overall accuracy: " << std::fixed << std::setprecision(2)
                   << (100.0 * correct / numTestImages) << "% (" << correct << "/" << numTestImages << ")" << std::endl;
 
-        std::cout << "\n  Per-letter accuracy:" << std::endl;
-        for (int l = 0; l < NUM_LETTERS; ++l) {
-            if (perLetterTotal[l] > 0) {
-                char letter = 'A' + l;
-                double acc = 100.0 * perLetterCorrect[l] / perLetterTotal[l];
-                std::cout << "    Letter " << letter << ": " << std::fixed << std::setprecision(1)
-                          << acc << "% (" << perLetterCorrect[l] << "/" << perLetterTotal[l] << ")" << std::endl;
+        std::cout << "\n  Per-digit accuracy:" << std::endl;
+        for (int d = 0; d < 10; ++d) {
+            if (perDigitTotal[d] > 0) {
+                double acc = 100.0 * perDigitCorrect[d] / perDigitTotal[d];
+                std::cout << "    Digit " << d << ": " << std::fixed << std::setprecision(1)
+                          << acc << "% (" << perDigitCorrect[d] << "/" << perDigitTotal[d] << ")" << std::endl;
             }
         }
 
-        // Print confusion matrix (26x26 is too large, so we'll skip the full matrix display)
+        // Print confusion matrix
         std::cout << "\n=== Confusion Matrix ===" << std::endl;
-        std::cout << "(26×26 matrix - showing top confusions only)\n" << std::endl;
+        std::cout << "Rows = True Label, Columns = Predicted Label\n" << std::endl;
+
+        // Header
+        std::cout << "True\\Pred";
+        for (int p = 0; p < 10; ++p) {
+            std::cout << std::setw(6) << p;
+        }
+        std::cout << std::endl;
+
+        // Matrix rows
+        for (int t = 0; t < 10; ++t) {
+            std::cout << std::setw(9) << t;
+            for (int p = 0; p < 10; ++p) {
+                std::cout << std::setw(6) << confusionMatrix[t][p];
+            }
+            std::cout << std::endl;
+        }
 
         // Analyze top confusions (excluding correct predictions)
-        std::cout << "=== Top Confusions (True → Predicted) ===" << std::endl;
+        std::cout << "\n=== Top Confusions (True → Predicted) ===" << std::endl;
         std::vector<std::tuple<int, int, int, double>> confusions;  // (true, pred, count, percentage)
 
-        for (int t = 0; t < NUM_LETTERS; ++t) {
-            for (int p = 0; p < NUM_LETTERS; ++p) {
+        for (int t = 0; t < 10; ++t) {
+            for (int p = 0; p < 10; ++p) {
                 if (t != p && confusionMatrix[t][p] > 0) {
-                    double percentage = 100.0 * confusionMatrix[t][p] / perLetterTotal[t];
+                    double percentage = 100.0 * confusionMatrix[t][p] / perDigitTotal[t];
                     confusions.push_back({t, p, confusionMatrix[t][p], percentage});
                 }
             }
@@ -2133,14 +2109,12 @@ int main(int argc, char* argv[]) {
         std::sort(confusions.begin(), confusions.end(),
                  [](const auto& a, const auto& b) { return std::get<2>(a) > std::get<2>(b); });
 
-        // Print top 30 confusions (more than MNIST since we have 26 classes)
+        // Print top 20 confusions
         std::cout << "Rank  True→Pred  Count  % of True" << std::endl;
-        for (size_t i = 0; i < std::min(size_t(30), confusions.size()); ++i) {
+        for (size_t i = 0; i < std::min(size_t(20), confusions.size()); ++i) {
             auto [t, p, count, pct] = confusions[i];
-            char trueLetter = 'A' + t;
-            char predLetter = 'A' + p;
             std::cout << std::setw(4) << (i+1) << "  "
-                      << std::setw(4) << trueLetter << "→" << std::setw(4) << predLetter << "  "
+                      << std::setw(4) << t << "→" << std::setw(4) << p << "  "
                       << std::setw(5) << count << "  "
                       << std::fixed << std::setprecision(1) << std::setw(6) << pct << "%"
                       << std::endl;

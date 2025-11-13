@@ -1,0 +1,23 @@
+{
+  "neuron": {
+    "window_size_ms": 100.0,
+    "similarity_threshold": 0.90,
+    "max_patterns": 400
+  },
+  "spike_processor": {
+    "num_threads": 20,
+    "time_slice_ms": 1.0,
+    "real_time_sync": false
+  },
+  "training": {
+    "examples_per_digit": 600,
+    "test_images": 10000
+  },
+  "data": {
+    "train_images": "/home/dean/repos/ctm/data/MNIST/raw/train-images-idx3-ubyte",
+    "train_labels": "/home/dean/repos/ctm/data/MNIST/raw/train-labels-idx1-ubyte",
+    "test_images": "/home/dean/repos/ctm/data/MNIST/raw/t10k-images-idx3-ubyte",
+    "test_labels": "/home/dean/repos/ctm/data/MNIST/raw/t10k-labels-idx1-ubyte"
+  }
+}
+
