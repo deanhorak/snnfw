@@ -148,6 +148,7 @@ set(LIB_SOURCES
     src/EMNISTLoader.cpp
     src/STDPLearning.cpp
     src/HyperparameterOptimizer.cpp
+    src/ConfigOptimizer.cpp
     src/adapters/RetinaAdapter.cpp
     src/adapters/DisplayAdapter.cpp
     src/adapters/AudioAdapter.cpp
@@ -351,6 +352,9 @@ target_link_libraries(test_emnist_loader ${PROJECT_NAME})
 add_executable(emnist_letters_v1 experiments/emnist_letters_v1.cpp)
 target_link_libraries(emnist_letters_v1 ${PROJECT_NAME})
 target_link_libraries(emnist_letters_v1 CURL::libcurl)
+
+add_executable(emnist_letters_optimize experiments/emnist_letters_optimize.cpp)
+target_link_libraries(emnist_letters_optimize ${PROJECT_NAME})
 
 # Analysis tools
 add_executable(analyze_network_stats tools/analyze_network_stats.cpp)

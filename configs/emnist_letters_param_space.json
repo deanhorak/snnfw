@@ -1,0 +1,81 @@
+{
+  "description": "Parameter space for EMNIST letters optimization",
+  "parameters": [
+    {
+      "name": "/neuron/window_size_ms",
+      "type": "discrete",
+      "values": [50.0, 75.0, 100.0, 125.0, 150.0]
+    },
+    {
+      "name": "/neuron/similarity_threshold",
+      "type": "discrete",
+      "values": [0.75, 0.80, 0.85, 0.90]
+    },
+    {
+      "name": "/neuron/max_patterns",
+      "type": "discrete",
+      "values": [200, 300, 400, 500, 600]
+    },
+    {
+      "name": "/training/examples_per_letter",
+      "type": "discrete",
+      "values": [400, 600, 800, 1000, 1200]
+    },
+    {
+      "name": "/architecture/columns/num_orientations",
+      "type": "discrete",
+      "values": [4, 6, 8]
+    },
+    {
+      "name": "/architecture/columns/num_frequencies",
+      "type": "discrete",
+      "values": [2, 3]
+    },
+    {
+      "name": "/architecture/columns/num_center_surround_scales",
+      "type": "discrete",
+      "values": [0, 2, 3]
+    },
+    {
+      "name": "/architecture/columns/num_specialized_detectors",
+      "type": "discrete",
+      "values": [0, 2, 4, 6]
+    },
+    {
+      "name": "/architecture/layers/layer23_neurons",
+      "type": "discrete",
+      "values": [128, 192, 256, 320]
+    },
+    {
+      "name": "/architecture/layers/layer4_size",
+      "type": "discrete",
+      "values": [7, 8, 9]
+    },
+    {
+      "name": "/architecture/layers/layer5_neurons",
+      "type": "discrete",
+      "values": [48, 64, 80]
+    },
+    {
+      "name": "/architecture/connectivity/lateral_connectivity",
+      "type": "discrete",
+      "values": [0.10, 0.15, 0.20, 0.25]
+    },
+    {
+      "name": "/architecture/connectivity/recurrent_connectivity",
+      "type": "discrete",
+      "values": [0.10, 0.15, 0.20]
+    },
+    {
+      "name": "/architecture/gabor/threshold",
+      "type": "discrete",
+      "values": [0.05, 0.10, 0.15, 0.20]
+    },
+    {
+      "name": "/architecture/output/neurons_per_class",
+      "type": "discrete",
+      "values": [15, 20, 25, 30]
+    }
+  ]
+}
+
