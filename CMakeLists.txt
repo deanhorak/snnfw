@@ -348,6 +348,10 @@ target_include_directories(mnist_orientation_columns PRIVATE
 add_executable(test_emnist_loader experiments/test_emnist_loader.cpp)
 target_link_libraries(test_emnist_loader ${PROJECT_NAME})
 
+add_executable(emnist_letters_v1 experiments/emnist_letters_v1.cpp)
+target_link_libraries(emnist_letters_v1 ${PROJECT_NAME})
+target_link_libraries(emnist_letters_v1 CURL::libcurl)
+
 # Analysis tools
 add_executable(analyze_network_stats tools/analyze_network_stats.cpp)
 target_link_libraries(analyze_network_stats ${PROJECT_NAME})
