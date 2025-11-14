@@ -10,8 +10,8 @@
     "real_time_sync": false
   },
   "training": {
-    "examples_per_letter": 800,
-    "test_images": 20800
+    "examples_per_letter": 50,
+    "test_images": 260
   },
   "data": {
     "train_images": "/home/dean/repos/ctm/data/raw/emnist-letters-train-images-idx3-ubyte",
@@ -27,7 +27,7 @@
       "num_center_surround_types": 2,
       "num_blob_scales": 0,
       "num_blob_types": 0,
-      "num_specialized_detectors": 4
+      "num_specialized_detectors": 2
     },
     "layers": {
       "layer1_neurons": 32,
@@ -53,38 +53,15 @@
     }
   },
   "saccades": {
-    "enabled": false,
+    "enabled": true,
     "num_fixations": 4,
     "fixation_duration_ms": 100.0,
     "regions": [
-      {
-        "name": "top",
-        "row_start": 0,
-        "row_end": 13,
-        "col_start": 0,
-        "col_end": 27
-      },
-      {
-        "name": "bottom",
-        "row_start": 14,
-        "row_end": 27,
-        "col_start": 0,
-        "col_end": 27
-      },
-      {
-        "name": "center",
-        "row_start": 7,
-        "row_end": 20,
-        "col_start": 7,
-        "col_end": 20
-      },
-      {
-        "name": "full",
-        "row_start": 0,
-        "row_end": 27,
-        "col_start": 0,
-        "col_end": 27
-      }
+      {"name": "top", "row_start": 0, "row_end": 13, "col_start": 0, "col_end": 27},
+      {"name": "bottom", "row_start": 14, "row_end": 27, "col_start": 0, "col_end": 27},
+      {"name": "center", "row_start": 7, "row_end": 20, "col_start": 7, "col_end": 20},
+      {"name": "full", "row_start": 0, "row_end": 27, "col_start": 0, "col_end": 27}
     ]
   }
 }
+

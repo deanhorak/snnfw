@@ -106,6 +106,20 @@ struct MultiColumnConfig {
     // Output layer parameters
     int neuronsPerClass;
 
+    // Saccade/spatial attention parameters
+    struct FixationRegion {
+        std::string name;
+        int rowStart;
+        int rowEnd;
+        int colStart;
+        int colEnd;
+    };
+
+    bool saccadesEnabled;
+    int numFixations;
+    double fixationDurationMs;
+    std::vector<FixationRegion> fixationRegions;
+
     static MultiColumnConfig fromConfigLoader(const ConfigLoader& loader) {
         MultiColumnConfig config;
 
@@ -166,6 +180,24 @@ struct MultiColumnConfig {
 
         // Output layer parameters
         config.neuronsPerClass = loader.get<int>("/architecture/output/neurons_per_class", 20);
+
+        // Saccade parameters
+        config.saccadesEnabled = loader.get<bool>("/saccades/enabled", false);
+        config.numFixations = loader.get<int>("/saccades/num_fixations", 4);
+        config.fixationDurationMs = loader.get<double>("/saccades/fixation_duration_ms", 100.0);
+
+        // Load fixation regions from JSON array
+        config.fixationRegions.clear();
+        if (config.saccadesEnabled) {
+            // Default regions if not specified in config
+            config.fixationRegions = {
+                {"top", 0, 13, 0, 27},
+                {"bottom", 14, 27, 0, 27},
+                {"center", 7, 20, 7, 20},
+                {"full", 0, 27, 0, 27}
+            };
+            // TODO: Parse from JSON array when needed
+        }
 
         return config;
     }
@@ -475,6 +507,29 @@ std::vector<std::vector<double>> createMiddleConstrictionKernel(int size = 9) {
     }
 
     return kernel;
+}
+
+/**
+ * @brief Extract a spatial region from an image for fixation
+ * @param imagePixels Full 28x28 image
+ * @param region Fixation region specification
+ * @return Extracted region pixels (padded to 28x28 with zeros outside region)
+ */
+std::vector<uint8_t> extractFixationRegion(const std::vector<uint8_t>& imagePixels,
+                                           const MultiColumnConfig::FixationRegion& region,
+                                           int imgWidth = 28,
+                                           int imgHeight = 28) {
+    // Create a blank image (all zeros)
+    std::vector<uint8_t> regionPixels(imgWidth * imgHeight, 0);
+
+    // Copy only the specified region
+    for (int y = region.rowStart; y <= region.rowEnd && y < imgHeight; ++y) {
+        for (int x = region.colStart; x <= region.colEnd && x < imgWidth; ++x) {
+            regionPixels[y * imgWidth + x] = imagePixels[y * imgWidth + x];
+        }
+    }
+
+    return regionPixels;
 }
 
 /**
@@ -1768,95 +1823,118 @@ int main(int argc, char* argv[]) {
             // Also fire Layer 5 neurons based on Layer 4 activity (hierarchical processing)
             std::vector<std::shared_ptr<Neuron>> layer5Neurons;
 
-            // First pass: Calculate column strengths for selective firing (PARALLELIZED)
-            std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
-            std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
+            // Determine number of fixations (1 if saccades disabled, or configured number)
+            int numFixations = config.saccadesEnabled ? config.numFixations : 1;
 
-            // Parallelize Gabor filter application across columns
-            const int numThreads = std::min(24, NUM_COLUMNS);
-            std::vector<std::future<void>> futures;
+            // Process each fixation sequentially
+            for (int fixationIdx = 0; fixationIdx < numFixations; ++fixationIdx) {
+                // Extract fixation region (or use full image if saccades disabled)
+                std::vector<uint8_t> fixationPixels;
+                if (config.saccadesEnabled && fixationIdx < static_cast<int>(config.fixationRegions.size())) {
+                    fixationPixels = extractFixationRegion(emnistImg.pixels, config.fixationRegions[fixationIdx]);
+                } else {
+                    fixationPixels = emnistImg.pixels;  // Full image
+                }
 
-            auto processColumnBatch = [&](int startCol, int endCol) {
-                for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
-                    auto& col = corticalColumns[colIdx];
-                    auto gaborResponse = applyGaborFilter(emnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+                // Time offset for this fixation
+                double fixationTimeOffset = fixationIdx * config.fixationDurationMs;
+                double fixationTime = currentTime + fixationTimeOffset;
 
-                    // Collect active Layer 4 neurons and calculate column strength
-                    for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
-                        if (gaborResponse[neuronIdx] > 0.1) {
-                            columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
-                            columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                // First pass: Calculate column strengths for selective firing (PARALLELIZED)
+                std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
+                std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
+
+                // Parallelize Gabor filter application across columns
+                const int numThreads = std::min(24, NUM_COLUMNS);
+                std::vector<std::future<void>> futures;
+
+                auto processColumnBatch = [&](int startCol, int endCol) {
+                    for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
+                        auto& col = corticalColumns[colIdx];
+                        auto gaborResponse = applyGaborFilter(fixationPixels, col.gaborKernel, LAYER4_SIZE);
+
+                        // Collect active Layer 4 neurons and calculate column strength
+                        for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
+                            if (gaborResponse[neuronIdx] > config.gaborThreshold) {
+                                columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
+                                columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                            }
                         }
                     }
-                }
-            };
+                };
 
-            // Divide columns among threads
-            int colsPerThread = (NUM_COLUMNS + numThreads - 1) / numThreads;
-            for (int t = 0; t < numThreads; ++t) {
-                int startCol = t * colsPerThread;
-                int endCol = std::min(startCol + colsPerThread, NUM_COLUMNS);
-                if (startCol < NUM_COLUMNS) {
-                    futures.push_back(std::async(std::launch::async, processColumnBatch, startCol, endCol));
-                }
-            }
-
-            // Wait for all threads to complete
-            for (auto& f : futures) {
-                f.get();
-            }
-
-            // Calculate mean column strength for selective firing
-            double meanStrength = 0.0;
-            for (double s : columnStrengths) meanStrength += s;
-            meanStrength /= NUM_COLUMNS;
-
-            // Second pass: Fire neurons only from strong columns
-            for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                // Skip weak columns (selective firing for discrimination)
-                if (columnStrengths[colIdx] < meanStrength) {
-                    // Still collect Layer 5 neurons for pattern copying
-                    layer5Neurons.insert(layer5Neurons.end(),
-                                        corticalColumns[colIdx].layer5Neurons.begin(),
-                                        corticalColumns[colIdx].layer5Neurons.end());
-                    continue;
+                // Divide columns among threads
+                int colsPerThread = (NUM_COLUMNS + numThreads - 1) / numThreads;
+                for (int t = 0; t < numThreads; ++t) {
+                    int startCol = t * colsPerThread;
+                    int endCol = std::min(startCol + colsPerThread, NUM_COLUMNS);
+                    if (startCol < NUM_COLUMNS) {
+                        futures.push_back(std::async(std::launch::async, processColumnBatch, startCol, endCol));
+                    }
                 }
 
-                auto& col = corticalColumns[colIdx];
-                auto& activeL4 = columnActiveL4[colIdx];
-
-                // Fire Layer 4 neurons
-                for (const auto& [neuronIdx, response] : activeL4) {
-                    double firingTime = currentTime + (1.0 - response) * 10.0;
-                    col.layer4Neurons[neuronIdx]->fireSignature(firingTime);
-                    col.layer4Neurons[neuronIdx]->fireAndAcknowledge(firingTime);
-                    networkPropagator->fireNeuron(col.layer4Neurons[neuronIdx]->getId(), firingTime);
+                // Wait for all threads to complete
+                for (auto& f : futures) {
+                    f.get();
                 }
 
-                // Sort by response strength (highest first)
-                std::sort(activeL4.begin(), activeL4.end(),
-                         [](const auto& a, const auto& b) { return a.second > b.second; });
+                // Calculate mean column strength for selective firing
+                double meanStrength = 0.0;
+                for (double s : columnStrengths) meanStrength += s;
+                meanStrength /= NUM_COLUMNS;
 
-                // Fire MORE Layer 5 neurons (100% of active L4) for richer patterns
-                int numL5ToFire = std::min(static_cast<int>(col.layer5Neurons.size()),
-                                          static_cast<int>(activeL4.size()));
+                // Second pass: Fire neurons only from strong columns
+                for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
+                    // Skip weak columns (selective firing for discrimination)
+                    if (columnStrengths[colIdx] < meanStrength) {
+                        // Still collect Layer 5 neurons for pattern copying (only on last fixation)
+                        if (fixationIdx == numFixations - 1) {
+                            layer5Neurons.insert(layer5Neurons.end(),
+                                                corticalColumns[colIdx].layer5Neurons.begin(),
+                                                corticalColumns[colIdx].layer5Neurons.end());
+                        }
+                        continue;
+                    }
 
-                for (int i = 0; i < numL5ToFire && i < static_cast<int>(activeL4.size()); ++i) {
-                    size_t l4Idx = activeL4[i].first;
-                    size_t l5Idx = l4Idx % col.layer5Neurons.size();
+                    auto& col = corticalColumns[colIdx];
+                    auto& activeL4 = columnActiveL4[colIdx];
 
-                    auto& l5Neuron = col.layer5Neurons[l5Idx];
-                    // Even tighter temporal spacing for more precise patterns
-                    double baseTime = currentTime + 15.0 + (colIdx * 1.5) + (i * 0.2);
-                    l5Neuron->fireSignature(baseTime);
-                    l5Neuron->fireAndAcknowledge(baseTime);
-                    networkPropagator->fireNeuron(l5Neuron->getId(), baseTime);
-                    l5Neuron->learnCurrentPattern();
+                    // Fire Layer 4 neurons with fixation time offset
+                    for (const auto& [neuronIdx, response] : activeL4) {
+                        double firingTime = fixationTime + (1.0 - response) * 10.0;
+                        col.layer4Neurons[neuronIdx]->fireSignature(firingTime);
+                        col.layer4Neurons[neuronIdx]->fireAndAcknowledge(firingTime);
+                        networkPropagator->fireNeuron(col.layer4Neurons[neuronIdx]->getId(), firingTime);
+                    }
+
+                    // Sort by response strength (highest first)
+                    std::sort(activeL4.begin(), activeL4.end(),
+                             [](const auto& a, const auto& b) { return a.second > b.second; });
+
+                    // Fire MORE Layer 5 neurons (100% of active L4) for richer patterns
+                    int numL5ToFire = std::min(static_cast<int>(col.layer5Neurons.size()),
+                                              static_cast<int>(activeL4.size()));
+
+                    for (int i = 0; i < numL5ToFire && i < static_cast<int>(activeL4.size()); ++i) {
+                        size_t l4Idx = activeL4[i].first;
+                        size_t l5Idx = l4Idx % col.layer5Neurons.size();
+
+                        auto& l5Neuron = col.layer5Neurons[l5Idx];
+                        // Even tighter temporal spacing for more precise patterns
+                        // Add fixation time offset to create temporal sequences
+                        double baseTime = fixationTime + 15.0 + (colIdx * 1.5) + (i * 0.2);
+                        l5Neuron->fireSignature(baseTime);
+                        l5Neuron->fireAndAcknowledge(baseTime);
+                        networkPropagator->fireNeuron(l5Neuron->getId(), baseTime);
+                        l5Neuron->learnCurrentPattern();
+                    }
+
+                    // Collect all Layer 5 neurons for pattern copying (only on last fixation)
+                    if (fixationIdx == numFixations - 1) {
+                        layer5Neurons.insert(layer5Neurons.end(), col.layer5Neurons.begin(), col.layer5Neurons.end());
+                    }
                 }
-
-                // Collect all Layer 5 neurons for pattern copying
-                layer5Neurons.insert(layer5Neurons.end(), col.layer5Neurons.begin(), col.layer5Neurons.end());
-            }
+            }  // End of fixation loop
 
             // Supervised learning: teach output neuron for this letter
             int neuronIndex = idx % outputPopulations[label].size();
@@ -1904,7 +1982,13 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         // Pre-compute Gabor Responses (CACHING OPTIMIZATION)
         // ========================================================================
+        // Note: Caching disabled when saccades are enabled (would need 4D cache)
+        bool useCaching = !config.saccadesEnabled;
+
         std::cout << "\n=== Pre-computing Gabor Responses ===" << std::endl;
+        if (!useCaching) {
+            std::cout << "  Caching disabled (saccades enabled)" << std::endl;
+        }
 
         size_t numTestImages = std::min((size_t)config.testImages, testLoader.size());
 
@@ -1912,53 +1996,61 @@ int main(int argc, char* argv[]) {
         std::vector<std::vector<std::vector<double>>> gaborCache(numTestImages);
 
         auto cacheStart = std::chrono::steady_clock::now();
+        double cacheTime = 0.0;
+        size_t cacheSize = 0;
 
-        // Parallelize across images
-        const int numCacheThreads = std::min(24, (int)numTestImages);
-        std::vector<std::future<void>> cacheFutures;
+        if (useCaching) {
+            // Parallelize across images
+            const int numCacheThreads = std::min(24, (int)numTestImages);
+            std::vector<std::future<void>> cacheFutures;
 
-        auto cacheImageBatch = [&](size_t startImg, size_t endImg) {
-            for (size_t imgIdx = startImg; imgIdx < endImg; ++imgIdx) {
-                const auto& emnistImg = testLoader.getImage(imgIdx);
-                gaborCache[imgIdx].resize(NUM_COLUMNS);
+            auto cacheImageBatch = [&](size_t startImg, size_t endImg) {
+                for (size_t imgIdx = startImg; imgIdx < endImg; ++imgIdx) {
+                    const auto& emnistImg = testLoader.getImage(imgIdx);
+                    gaborCache[imgIdx].resize(NUM_COLUMNS);
 
-                for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                    auto& col = corticalColumns[colIdx];
-                    gaborCache[imgIdx][colIdx] = applyGaborFilter(emnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+                    for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
+                        auto& col = corticalColumns[colIdx];
+                        gaborCache[imgIdx][colIdx] = applyGaborFilter(emnistImg.pixels, col.gaborKernel, LAYER4_SIZE);
+                    }
+                }
+            };
+
+            // Divide images among threads
+            size_t imgsPerThread = (numTestImages + numCacheThreads - 1) / numCacheThreads;
+            for (int t = 0; t < numCacheThreads; ++t) {
+                size_t startImg = t * imgsPerThread;
+                size_t endImg = std::min(startImg + imgsPerThread, numTestImages);
+                if (startImg < numTestImages) {
+                    cacheFutures.push_back(std::async(std::launch::async, cacheImageBatch, startImg, endImg));
                 }
             }
-        };
 
-        // Divide images among threads
-        size_t imgsPerThread = (numTestImages + numCacheThreads - 1) / numCacheThreads;
-        for (int t = 0; t < numCacheThreads; ++t) {
-            size_t startImg = t * imgsPerThread;
-            size_t endImg = std::min(startImg + imgsPerThread, numTestImages);
-            if (startImg < numTestImages) {
-                cacheFutures.push_back(std::async(std::launch::async, cacheImageBatch, startImg, endImg));
+            // Wait for all caching to complete
+            for (auto& f : cacheFutures) {
+                f.get();
             }
+
+            auto cacheEnd = std::chrono::steady_clock::now();
+            cacheTime = std::chrono::duration<double>(cacheEnd - cacheStart).count();
+
+            // Calculate cache size
+            cacheSize = numTestImages * NUM_COLUMNS * LAYER4_SIZE * LAYER4_SIZE * sizeof(double);
+            std::cout << "✓ Pre-computed Gabor responses for " << numTestImages << " images" << std::endl;
+            std::cout << "  Cache time: " << cacheTime << "s" << std::endl;
+            std::cout << "  Cache size: " << (cacheSize / 1024 / 1024) << " MB" << std::endl;
         }
-
-        // Wait for all caching to complete
-        for (auto& f : cacheFutures) {
-            f.get();
-        }
-
-        auto cacheEnd = std::chrono::steady_clock::now();
-        double cacheTime = std::chrono::duration<double>(cacheEnd - cacheStart).count();
-
-        // Calculate cache size
-        size_t cacheSize = numTestImages * NUM_COLUMNS * LAYER4_SIZE * LAYER4_SIZE * sizeof(double);
-        std::cout << "✓ Pre-computed Gabor responses for " << numTestImages << " images" << std::endl;
-        std::cout << "  Cache time: " << cacheTime << "s" << std::endl;
-        std::cout << "  Cache size: " << (cacheSize / 1024 / 1024) << " MB" << std::endl;
 
         // ========================================================================
         // Testing Phase
         // ========================================================================
         std::cout << "\n=== Testing Phase ===" << std::endl;
         std::cout << "  Using output layer population activations for classification" << std::endl;
-        std::cout << "  Using cached Gabor responses (no re-computation)" << std::endl;
+        if (useCaching) {
+            std::cout << "  Using cached Gabor responses (no re-computation)" << std::endl;
+        } else {
+            std::cout << "  Computing Gabor responses on-the-fly (saccades enabled)" << std::endl;
+        }
 
         auto testStart = std::chrono::steady_clock::now();
 
@@ -1988,69 +2080,127 @@ int main(int argc, char* argv[]) {
             // Also fire Layer 5 neurons based on Layer 4 activity
             std::vector<std::shared_ptr<Neuron>> layer5Neurons;
 
-            // First pass: Calculate column strengths using CACHED Gabor responses
-            std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
-            std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
+            // Determine number of fixations (1 if saccades disabled, or configured number)
+            int numFixations = config.saccadesEnabled ? config.numFixations : 1;
 
-            // Use cached Gabor responses (no re-computation!)
-            for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                auto& col = corticalColumns[colIdx];
-                const auto& gaborResponse = gaborCache[i][colIdx];  // Cache lookup
+            // Process each fixation sequentially
+            for (int fixationIdx = 0; fixationIdx < numFixations; ++fixationIdx) {
+                // Extract fixation region (or use full image if saccades disabled)
+                std::vector<uint8_t> fixationPixels;
+                if (config.saccadesEnabled && fixationIdx < static_cast<int>(config.fixationRegions.size())) {
+                    fixationPixels = extractFixationRegion(emnistImg.pixels, config.fixationRegions[fixationIdx]);
+                } else {
+                    fixationPixels = emnistImg.pixels;  // Full image
+                }
 
-                for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
-                    if (gaborResponse[neuronIdx] > 0.1) {
-                        columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
-                        columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                // Time offset for this fixation
+                double fixationTimeOffset = fixationIdx * config.fixationDurationMs;
+                double fixationTime = currentTime + fixationTimeOffset;
+
+                // First pass: Calculate column strengths
+                std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
+                std::vector<std::vector<std::pair<size_t, double>>> columnActiveL4(NUM_COLUMNS);
+
+                if (useCaching && fixationIdx == 0) {
+                    // Use cached Gabor responses (only for first fixation, only when saccades disabled)
+                    for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
+                        auto& col = corticalColumns[colIdx];
+                        const auto& gaborResponse = gaborCache[i][colIdx];  // Cache lookup
+
+                        for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
+                            if (gaborResponse[neuronIdx] > config.gaborThreshold) {
+                                columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
+                                columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                            }
+                        }
+                    }
+                } else {
+                    // Compute Gabor responses on-the-fly (for saccades or when caching disabled)
+                    const int numThreads = std::min(24, NUM_COLUMNS);
+                    std::vector<std::future<void>> futures;
+
+                    auto processColumnBatch = [&](int startCol, int endCol) {
+                        for (int colIdx = startCol; colIdx < endCol; ++colIdx) {
+                            auto& col = corticalColumns[colIdx];
+                            auto gaborResponse = applyGaborFilter(fixationPixels, col.gaborKernel, LAYER4_SIZE);
+
+                            for (size_t neuronIdx = 0; neuronIdx < col.layer4Neurons.size() && neuronIdx < gaborResponse.size(); ++neuronIdx) {
+                                if (gaborResponse[neuronIdx] > config.gaborThreshold) {
+                                    columnActiveL4[colIdx].push_back({neuronIdx, gaborResponse[neuronIdx]});
+                                    columnStrengths[colIdx] += gaborResponse[neuronIdx];
+                                }
+                            }
+                        }
+                    };
+
+                    int colsPerThread = (NUM_COLUMNS + numThreads - 1) / numThreads;
+                    for (int t = 0; t < numThreads; ++t) {
+                        int startCol = t * colsPerThread;
+                        int endCol = std::min(startCol + colsPerThread, NUM_COLUMNS);
+                        if (startCol < NUM_COLUMNS) {
+                            futures.push_back(std::async(std::launch::async, processColumnBatch, startCol, endCol));
+                        }
+                    }
+
+                    for (auto& f : futures) {
+                        f.get();
                     }
                 }
-            }
 
-            // Calculate mean column strength
-            double meanStrength = 0.0;
-            for (double s : columnStrengths) meanStrength += s;
-            meanStrength /= NUM_COLUMNS;
+                // Calculate mean column strength
+                double meanStrength = 0.0;
+                for (double s : columnStrengths) meanStrength += s;
+                meanStrength /= NUM_COLUMNS;
 
-            // Second pass: Fire neurons only from strong columns (same as training)
-            for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
-                if (columnStrengths[colIdx] < meanStrength) {
-                    layer5Neurons.insert(layer5Neurons.end(),
-                                        corticalColumns[colIdx].layer5Neurons.begin(),
-                                        corticalColumns[colIdx].layer5Neurons.end());
-                    continue;
+                // Second pass: Fire neurons only from strong columns (same as training)
+                for (int colIdx = 0; colIdx < NUM_COLUMNS; ++colIdx) {
+                    if (columnStrengths[colIdx] < meanStrength) {
+                        // Still collect Layer 5 neurons for pattern copying (only on last fixation)
+                        if (fixationIdx == numFixations - 1) {
+                            layer5Neurons.insert(layer5Neurons.end(),
+                                                corticalColumns[colIdx].layer5Neurons.begin(),
+                                                corticalColumns[colIdx].layer5Neurons.end());
+                        }
+                        continue;
+                    }
+
+                    auto& col = corticalColumns[colIdx];
+                    auto& activeL4 = columnActiveL4[colIdx];
+
+                    // Fire Layer 4 neurons with fixation time offset
+                    for (const auto& [neuronIdx, response] : activeL4) {
+                        double firingTime = fixationTime + (1.0 - response) * 10.0;
+                        col.layer4Neurons[neuronIdx]->fireSignature(firingTime);
+                        col.layer4Neurons[neuronIdx]->fireAndAcknowledge(firingTime);
+                        networkPropagator->fireNeuron(col.layer4Neurons[neuronIdx]->getId(), firingTime);
+                    }
+
+                    // Sort by response strength
+                    std::sort(activeL4.begin(), activeL4.end(),
+                             [](const auto& a, const auto& b) { return a.second > b.second; });
+
+                    // Fire Layer 5 neurons (same as training: 100%, tighter timing)
+                    int numL5ToFire = std::min(static_cast<int>(col.layer5Neurons.size()),
+                                              static_cast<int>(activeL4.size()));
+
+                    for (int i = 0; i < numL5ToFire && i < static_cast<int>(activeL4.size()); ++i) {
+                        size_t l4Idx = activeL4[i].first;
+                        size_t l5Idx = l4Idx % col.layer5Neurons.size();
+
+                        auto& l5Neuron = col.layer5Neurons[l5Idx];
+                        // Add fixation time offset to create temporal sequences
+                        double baseTime = fixationTime + 15.0 + (colIdx * 1.5) + (i * 0.2);
+                        l5Neuron->fireSignature(baseTime);
+                        l5Neuron->fireAndAcknowledge(baseTime);
+                        networkPropagator->fireNeuron(l5Neuron->getId(), baseTime);
+                    }
+
+                    // Collect all Layer 5 neurons for pattern copying (only on last fixation)
+                    if (fixationIdx == numFixations - 1) {
+                        layer5Neurons.insert(layer5Neurons.end(), col.layer5Neurons.begin(), col.layer5Neurons.end());
+                    }
                 }
-
-                auto& col = corticalColumns[colIdx];
-                auto& activeL4 = columnActiveL4[colIdx];
-
-                // Fire Layer 4 neurons
-                for (const auto& [neuronIdx, response] : activeL4) {
-                    double firingTime = currentTime + (1.0 - response) * 10.0;
-                    col.layer4Neurons[neuronIdx]->fireSignature(firingTime);
-                    col.layer4Neurons[neuronIdx]->fireAndAcknowledge(firingTime);
-                    networkPropagator->fireNeuron(col.layer4Neurons[neuronIdx]->getId(), firingTime);
-                }
-
-                // Sort by response strength
-                std::sort(activeL4.begin(), activeL4.end(),
-                         [](const auto& a, const auto& b) { return a.second > b.second; });
-
-                // Fire Layer 5 neurons (same as training: 100%, tighter timing)
-                int numL5ToFire = std::min(static_cast<int>(col.layer5Neurons.size()),
-                                          static_cast<int>(activeL4.size()));
-
-                for (int i = 0; i < numL5ToFire && i < static_cast<int>(activeL4.size()); ++i) {
-                    size_t l4Idx = activeL4[i].first;
-                    size_t l5Idx = l4Idx % col.layer5Neurons.size();
-
-                    auto& l5Neuron = col.layer5Neurons[l5Idx];
-                    double baseTime = currentTime + 15.0 + (colIdx * 1.5) + (i * 0.2);
-                    l5Neuron->fireSignature(baseTime);
-                    l5Neuron->fireAndAcknowledge(baseTime);
-                    networkPropagator->fireNeuron(l5Neuron->getId(), baseTime);
-                }
-
-                layer5Neurons.insert(layer5Neurons.end(), col.layer5Neurons.begin(), col.layer5Neurons.end());
-            }
+            }  // End of fixation loop
 
             // Copy Layer 5 spike pattern to ALL output populations for pattern matching
             for (int letter = 0; letter < NUM_LETTERS; ++letter) {
