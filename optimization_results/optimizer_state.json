@@ -1,6 +1,6 @@
 {
-  "best_accuracy": 0.534,
-  "best_trial_id": 1,
-  "current_trial": 3,
-  "trials_without_improvement": 1
+  "best_accuracy": 0.6834,
+  "best_trial_id": 26,
+  "current_trial": 57,
+  "trials_without_improvement": 30
 }

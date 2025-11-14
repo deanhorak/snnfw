@@ -131,23 +131,30 @@ std::string getCurrentTimestamp() {
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
-        std::cerr << "Usage: " << argv[0] << " <base_config> <param_space> <results_dir> [strategy] [max_trials]" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <base_config> <param_space> <results_dir> [strategy] [max_trials] [patience]" << std::endl;
         std::cerr << "\nStrategies: random (default), grid, coordinate, adaptive" << std::endl;
+        std::cerr << "max_trials: Maximum number of trials (default: 50)" << std::endl;
+        std::cerr << "patience: Trials without improvement before stopping (default: 20)" << std::endl;
         return 1;
     }
-    
+
     std::string baseConfigPath = argv[1];
     std::string paramSpacePath = argv[2];
     std::string resultsDir = argv[3];
-    
+
     std::string strategyStr = "random";
     if (argc > 4) {
         strategyStr = argv[4];
     }
-    
+
     int maxTrials = 50;
     if (argc > 5) {
         maxTrials = std::stoi(argv[5]);
+    }
+
+    int patience = 20;
+    if (argc > 6) {
+        patience = std::stoi(argv[6]);
     }
     
     // Initialize logger
@@ -160,6 +167,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Results directory: " << resultsDir << std::endl;
     std::cout << "  Strategy: " << strategyStr << std::endl;
     std::cout << "  Max trials: " << maxTrials << std::endl;
+    std::cout << "  Patience: " << patience << std::endl;
     std::cout << std::endl;
     
     try {
@@ -182,7 +190,7 @@ int main(int argc, char* argv[]) {
         optimizer.setConvergenceCriteria(
             maxTrials,      // max trials
             0.005,          // min improvement (0.5%)
-            10              // patience trials
+            patience        // patience trials
         );
         
         // Try to load previous state

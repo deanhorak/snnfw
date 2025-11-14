@@ -3,33 +3,33 @@
     "columns": {
       "num_blob_scales": 0,
       "num_blob_types": 0,
-      "num_center_surround_scales": 2,
+      "num_center_surround_scales": 3.0,
       "num_center_surround_types": 2,
-      "num_frequencies": 2,
-      "num_orientations": 4.0,
-      "num_specialized_detectors": 4
+      "num_frequencies": 2.0,
+      "num_orientations": 8.0,
+      "num_specialized_detectors": 4.0
     },
     "connectivity": {
-      "lateral_connectivity": 0.2,
+      "lateral_connectivity": 0.25,
       "neighbor_range": 2,
-      "recurrent_connectivity": 0.15,
+      "recurrent_connectivity": 0.2,
       "recurrent_delay": 2.0,
       "recurrent_weight": 0.4
     },
     "gabor": {
       "freq_high": 3.0,
       "freq_low": 8.0,
-      "threshold": 0.1
+      "threshold": 0.05
     },
     "layers": {
       "layer1_neurons": 32,
-      "layer23_neurons": 256.0,
-      "layer4_size": 8,
-      "layer5_neurons": 64,
+      "layer23_neurons": 320.0,
+      "layer4_size": 7.0,
+      "layer5_neurons": 64.0,
       "layer6_neurons": 32
     },
     "output": {
-      "neurons_per_class": 20
+      "neurons_per_class": 15.0
     }
   },
   "data": {
@@ -39,9 +39,9 @@
     "train_labels": "/home/dean/repos/ctm/data/raw/emnist-letters-train-labels-idx1-ubyte"
   },
   "neuron": {
-    "max_patterns": 400,
-    "similarity_threshold": 0.9,
-    "window_size_ms": 125.0
+    "max_patterns": 400.0,
+    "similarity_threshold": 0.85,
+    "window_size_ms": 75.0
   },
   "spike_processor": {
     "num_threads": 20,
@@ -49,7 +49,7 @@
     "time_slice_ms": 1.0
   },
   "training": {
-    "examples_per_letter": 600.0,
+    "examples_per_letter": 1000.0,
     "test_images": 20800
   }
 }

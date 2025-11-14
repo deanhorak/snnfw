@@ -271,23 +271,48 @@ nlohmann::json ConfigOptimizer::generateCoordinateAscentConfig() {
 nlohmann::json ConfigOptimizer::generateAdaptiveRandomConfig() {
     // Use best results to guide sampling
     nlohmann::json config = baseConfig_;
-    
+
     for (auto& param : parameters_) {
         if (bestTrialId_ >= 0 && results_.size() > 5) {
-            // Sample around best value with decreasing variance
-            const auto& bestResult = results_[bestTrialId_];
-            double bestValue = bestResult.parameters.at(param.name);
-            double range = (param.maxValue - param.minValue) / (1.0 + currentTrial_ / 10.0);
-            
-            std::normal_distribution<double> dist(bestValue, range * 0.2);
-            param.currentValue = std::clamp(dist(rng_), param.minValue, param.maxValue);
+            // For discrete parameters, sample from nearby values
+            if (param.type == ParameterDef::Type::DISCRETE_INT ||
+                param.type == ParameterDef::Type::DISCRETE_DOUBLE) {
+
+                const auto& bestResult = results_[bestTrialId_];
+                double bestValue = bestResult.parameters.at(param.name);
+
+                // Find index of best value in discrete set
+                size_t bestIdx = 0;
+                for (size_t i = 0; i < param.discreteValues.size(); ++i) {
+                    if (std::abs(param.discreteValues[i] - bestValue) < 1e-6) {
+                        bestIdx = i;
+                        break;
+                    }
+                }
+
+                // Sample from nearby indices with decreasing window
+                int window = std::max(1, static_cast<int>(param.discreteValues.size() / (2.0 + currentTrial_ / 10.0)));
+                int minIdx = std::max(0, static_cast<int>(bestIdx) - window);
+                int maxIdx = std::min(static_cast<int>(param.discreteValues.size()) - 1, static_cast<int>(bestIdx) + window);
+
+                std::uniform_int_distribution<int> dist(minIdx, maxIdx);
+                param.currentValue = param.discreteValues[dist(rng_)];
+            } else {
+                // For continuous parameters, use Gaussian sampling
+                const auto& bestResult = results_[bestTrialId_];
+                double bestValue = bestResult.parameters.at(param.name);
+                double range = (param.maxValue - param.minValue) / (1.0 + currentTrial_ / 10.0);
+
+                std::normal_distribution<double> dist(bestValue, range * 0.2);
+                param.currentValue = std::clamp(dist(rng_), param.minValue, param.maxValue);
+            }
         } else {
             param.currentValue = getRandomValue(param);
         }
-        
+
         setParameterInJson(config, param.name, param.currentValue);
     }
-    
+
     return config;
 }
 
