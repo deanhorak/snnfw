@@ -59,6 +59,9 @@ struct MultiColumnConfig {
     double neuronThreshold;
     int neuronMaxPatterns;
 
+    // Spike processor parameters
+    int numThreads;
+
     // Training parameters
     int trainingExamplesPerLetter;
     int testImages;
@@ -120,6 +123,10 @@ struct MultiColumnConfig {
     double fixationDurationMs;
     std::vector<FixationRegion> fixationRegions;
 
+    // Position encoding parameters
+    bool positionFeedbackEnabled;
+    int positionNeuronsPerFixation;
+
     static MultiColumnConfig fromConfigLoader(const ConfigLoader& loader) {
         MultiColumnConfig config;
 
@@ -127,6 +134,9 @@ struct MultiColumnConfig {
         config.neuronWindow = loader.get<double>("/neuron/window_size_ms", 200.0);
         config.neuronThreshold = loader.get<double>("/neuron/similarity_threshold", 0.90);
         config.neuronMaxPatterns = loader.get<int>("/neuron/max_patterns", 100);
+
+        // Spike processor parameters
+        config.numThreads = loader.get<int>("/spike_processor/num_threads", 20);
 
         // Training parameters
         config.trainingExamplesPerLetter = loader.get<int>("/training/examples_per_letter", 800);
@@ -198,6 +208,10 @@ struct MultiColumnConfig {
             };
             // TODO: Parse from JSON array when needed
         }
+
+        // Position encoding parameters
+        config.positionFeedbackEnabled = loader.get<bool>("/position_encoding/enabled", false);
+        config.positionNeuronsPerFixation = loader.get<int>("/position_encoding/neurons_per_fixation", 16);
 
         return config;
     }
@@ -1594,7 +1608,7 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "\n=== Initializing Spike Processing System ===" << std::endl;
 
-        auto spikeProcessor = std::make_shared<SpikeProcessor>(10000, 20);
+        auto spikeProcessor = std::make_shared<SpikeProcessor>(10000, config.numThreads);
         auto networkPropagator = std::make_shared<NetworkPropagator>(spikeProcessor);
 
         // Register all neurons
@@ -1779,6 +1793,129 @@ int main(int argc, char* argv[]) {
         std::cout << "✓ Registered output layer with spike processor" << std::endl;
 
         // ========================================================================
+        // Create Position Encoding Layer (if enabled)
+        // ========================================================================
+        std::vector<std::vector<std::shared_ptr<Neuron>>> positionNeurons;  // [fixationIdx][neuronIdx]
+        int positionSynapseCount = 0;  // Track for logging
+
+        if (config.positionFeedbackEnabled && config.saccadesEnabled) {
+            std::cout << "\n=== Creating Position Encoding Layer ===" << std::endl;
+
+            // Create a separate column for position encoding
+            auto positionColumn = factory.createColumn();
+            v1Nucleus->addColumn(positionColumn->getId());
+
+            auto positionLayer = factory.createLayer();
+            positionColumn->addLayer(positionLayer->getId());
+
+            // Create neurons for each fixation position
+            for (int fixIdx = 0; fixIdx < config.numFixations; ++fixIdx) {
+                auto fixationCluster = factory.createCluster();
+                positionLayer->addCluster(fixationCluster->getId());
+
+                std::vector<std::shared_ptr<Neuron>> fixationNeurons;
+                for (int i = 0; i < config.positionNeuronsPerFixation; ++i) {
+                    auto neuron = factory.createNeuron(neuronWindow, neuronThreshold, neuronMaxPatterns);
+                    fixationNeurons.push_back(neuron);
+                    fixationCluster->addNeuron(neuron->getId());
+                    allNeurons.push_back(neuron);
+                }
+                positionNeurons.push_back(fixationNeurons);
+            }
+
+            std::cout << "✓ Created position encoding layer: "
+                      << (config.numFixations * config.positionNeuronsPerFixation) << " neurons ("
+                      << config.positionNeuronsPerFixation << " per fixation)" << std::endl;
+
+            // Connect position neurons DIRECTLY to output layer (bypass L2/3 and L5)
+            // This allows position information to directly influence class predictions
+            std::cout << "\n=== Connecting Position Neurons to Output Layer ===" << std::endl;
+
+            int positionAxonCount = 0;
+            double positionInitialWeight = 0.1;  // Small initial weight (output uses population coding)
+
+            // Track starting indices for registration
+            size_t axonStartIdx = allAxons.size();
+            size_t synapseStartIdx = allSynapses.size();
+            size_t dendriteStartIdx = allDendrites.size();
+
+            for (auto& fixationNeurons : positionNeurons) {
+                for (auto& posNeuron : fixationNeurons) {
+                    // Create axon for position neuron
+                    auto axon = factory.createAxon(posNeuron->getId());
+                    posNeuron->setAxonId(axon->getId());
+                    allAxons.push_back(axon);
+                    positionAxonCount++;
+
+                    // Connect to ALL output neurons (full connectivity)
+                    // Each output neuron can learn which position neurons correlate with its class
+                    for (auto& population : outputPopulations) {
+                        for (auto& outputNeuron : population) {
+                            auto dendrite = factory.createDendrite(outputNeuron->getId());
+                            outputNeuron->addDendrite(dendrite->getId());
+                            allDendrites.push_back(dendrite);
+
+                            auto synapse = factory.createSynapse(
+                                posNeuron->getAxonId(),
+                                dendrite->getId(),
+                                positionInitialWeight,  // Small initial weight
+                                1.0   // 1ms delay
+                            );
+                            allSynapses.push_back(synapse);
+                            positionSynapseCount++;
+                        }
+                    }
+                }
+            }
+
+            int totalOutputNeurons = NUM_LETTERS * NEURONS_PER_LETTER;
+            std::cout << "✓ Connected position neurons to output layer: "
+                      << positionSynapseCount << " synapses from " << positionAxonCount << " axons" << std::endl;
+            std::cout << "  - Full connectivity: " << positionAxonCount << " position neurons × "
+                      << totalOutputNeurons << " output neurons = " << positionSynapseCount << " synapses" << std::endl;
+
+            // Register position neurons with NetworkPropagator
+            for (auto& fixationNeurons : positionNeurons) {
+                for (auto& neuron : fixationNeurons) {
+                    networkPropagator->registerNeuron(neuron);
+                    neuron->setNetworkPropagator(networkPropagator);
+                }
+            }
+
+            // Register new axons (use correct count!)
+            for (size_t i = axonStartIdx; i < allAxons.size(); ++i) {
+                networkPropagator->registerAxon(allAxons[i]);
+            }
+
+            // Register new synapses
+            for (size_t i = synapseStartIdx; i < allSynapses.size(); ++i) {
+                networkPropagator->registerSynapse(allSynapses[i]);
+            }
+
+            // Register new dendrites
+            for (size_t i = dendriteStartIdx; i < allDendrites.size(); ++i) {
+                networkPropagator->registerDendrite(allDendrites[i]);
+                allDendrites[i]->setNetworkPropagator(networkPropagator);
+                spikeProcessor->registerDendrite(allDendrites[i]);
+            }
+
+            std::cout << "✓ Registered position encoding layer with spike processor" << std::endl;
+            std::cout << "  - " << positionAxonCount << " axons registered" << std::endl;
+            std::cout << "  - " << positionSynapseCount << " synapses registered" << std::endl;
+            std::cout << "  - " << (allDendrites.size() - dendriteStartIdx) << " dendrites registered" << std::endl;
+
+            // Sample initial synapse weights for position neurons
+            std::cout << "\n=== Position Encoding Initial Synapse Weights (Sample) ===" << std::endl;
+            int sampleCount = 0;
+            double totalWeight = 0.0;
+            for (size_t i = synapseStartIdx; i < synapseStartIdx + std::min(size_t(100), size_t(positionSynapseCount)); ++i) {
+                totalWeight += allSynapses[i]->getWeight();
+                sampleCount++;
+            }
+            std::cout << "  Average weight of first 100 position synapses: " << (totalWeight / sampleCount) << std::endl;
+        }
+
+        // ========================================================================
         // Training Phase
         // ========================================================================
         std::cout << "\n=== Training Phase ===" << std::endl;
@@ -1798,6 +1935,9 @@ int main(int argc, char* argv[]) {
 
         std::cout << "  Selected " << trainingIndices.size() << " training images" << std::endl;
         std::cout << "  Using spike-based propagation with STDP learning" << std::endl;
+
+        // Track position neuron firing statistics
+        std::vector<int> positionNeuronFireCounts(config.positionFeedbackEnabled ? config.numFixations : 0, 0);
 
         auto trainStart = std::chrono::steady_clock::now();
 
@@ -1839,6 +1979,21 @@ int main(int argc, char* argv[]) {
                 // Time offset for this fixation
                 double fixationTimeOffset = fixationIdx * config.fixationDurationMs;
                 double fixationTime = currentTime + fixationTimeOffset;
+
+                // Fire position encoding neurons for this fixation (if enabled)
+                // Position neurons are connected directly to output layer
+                // They fire at the start of each fixation to provide position context
+                if (config.positionFeedbackEnabled && fixationIdx < static_cast<int>(positionNeurons.size())) {
+                    double positionFireTime = fixationTime;  // Fire at fixation start
+
+                    for (auto& posNeuron : positionNeurons[fixationIdx]) {
+                        // Fire the position neuron through NetworkPropagator
+                        posNeuron->fireSignature(positionFireTime);
+                        posNeuron->fireAndAcknowledge(positionFireTime);
+                        networkPropagator->fireNeuron(posNeuron->getId(), positionFireTime);
+                        positionNeuronFireCounts[fixationIdx]++;
+                    }
+                }
 
                 // First pass: Calculate column strengths for selective firing (PARALLELIZED)
                 std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);
@@ -1965,6 +2120,34 @@ int main(int argc, char* argv[]) {
         for (int l = 0; l < NUM_LETTERS; ++l) {
             char letter = 'A' + l;
             std::cout << "  Letter " << letter << ": " << trainCount[l] << " patterns" << std::endl;
+        }
+
+        // Report position neuron firing statistics
+        if (config.positionFeedbackEnabled) {
+            std::cout << "\n=== Position Encoding Statistics ===" << std::endl;
+            for (int fixIdx = 0; fixIdx < config.numFixations; ++fixIdx) {
+                std::cout << "  Fixation " << fixIdx << ": " << positionNeuronFireCounts[fixIdx]
+                          << " neuron fires (" << (positionNeuronFireCounts[fixIdx] / config.positionNeuronsPerFixation)
+                          << " images)" << std::endl;
+            }
+
+            // Sample synapse weights after training
+            std::cout << "\n=== Position Synapse Weights After Training (Sample) ===" << std::endl;
+            size_t synapseStartIdx = allSynapses.size() - positionSynapseCount;
+            int sampleCount = 0;
+            double totalWeight = 0.0;
+            double minWeight = 1.0;
+            double maxWeight = 0.0;
+            for (size_t i = synapseStartIdx; i < synapseStartIdx + std::min(size_t(100), size_t(positionSynapseCount)); ++i) {
+                double w = allSynapses[i]->getWeight();
+                totalWeight += w;
+                minWeight = std::min(minWeight, w);
+                maxWeight = std::max(maxWeight, w);
+                sampleCount++;
+            }
+            std::cout << "  Average weight of first 100 position synapses: " << (totalWeight / sampleCount) << std::endl;
+            std::cout << "  Min weight: " << minWeight << ", Max weight: " << maxWeight << std::endl;
+            std::cout << "  (Initial weight was 0.8)" << std::endl;
         }
 
         // ========================================================================
@@ -2096,6 +2279,20 @@ int main(int argc, char* argv[]) {
                 // Time offset for this fixation
                 double fixationTimeOffset = fixationIdx * config.fixationDurationMs;
                 double fixationTime = currentTime + fixationTimeOffset;
+
+                // Fire position encoding neurons for this fixation (if enabled)
+                // Position neurons are connected directly to output layer
+                // They fire at the start of each fixation to provide position context
+                if (config.positionFeedbackEnabled && fixationIdx < static_cast<int>(positionNeurons.size())) {
+                    double positionFireTime = fixationTime;  // Fire at fixation start
+
+                    for (auto& posNeuron : positionNeurons[fixationIdx]) {
+                        // Fire the position neuron through NetworkPropagator
+                        posNeuron->fireSignature(positionFireTime);
+                        posNeuron->fireAndAcknowledge(positionFireTime);
+                        networkPropagator->fireNeuron(posNeuron->getId(), positionFireTime);
+                    }
+                }
 
                 // First pass: Calculate column strengths
                 std::vector<double> columnStrengths(NUM_COLUMNS, 0.0);

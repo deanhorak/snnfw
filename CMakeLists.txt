@@ -376,3 +376,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 install(DIRECTORY include/ DESTINATION include)
+
+# Saccades debug test
+add_executable(test_saccades_debug experiments/test_saccades_debug.cpp)
+target_link_libraries(test_saccades_debug ${PROJECT_NAME})

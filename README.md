@@ -485,6 +485,39 @@ See **[MNIST_EXPERIMENTS.md](MNIST_EXPERIMENTS.md)** for complete details.
 
 See **[MNIST_V1_MULTICOLUMN.md](MNIST_V1_MULTICOLUMN.md)** for complete details.
 
+## 🔤 EMNIST Letters Classification
+
+The `experiments/` directory also contains EMNIST letters (A-Z) classification experiments demonstrating advanced multi-column architecture with saccades:
+
+### Multi-Column Architecture with Saccades and Optimization
+
+**Current Best Result: 71.93% accuracy** using:
+- **24 cortical columns** with diverse feature detectors:
+  - 16 orientation columns (8 orientations × 2 frequencies)
+  - 6 center-surround columns (3 scales × 2 types)
+  - 2 specialized detectors (top-loop, gap)
+- **6 layers per column** (L1, L2/3, L4, L5, L6) with optimized neuron counts
+- **16,542 neurons total** with ~4.9M synapses
+- **Saccade-based sequential spatial attention** (4 fixations: TOP, BOTTOM, CENTER, FULL)
+- **Temporal integration** (500ms window spanning all fixations)
+- **Optimized hyperparameters** via 80-trial Optuna optimization:
+  - Layer 2/3: 448 neurons (integration layer)
+  - Layer 5: 80 neurons (output layer)
+  - 15 neurons per letter (390 output neurons total)
+  - Gabor threshold: 0.24 (high selectivity)
+  - Similarity threshold: 0.93 (selective pattern matching)
+  - Recurrent weight: 0.3 (balanced feedback)
+- **Population-based classification** with spike-based pattern learning
+- **+4.53% improvement** over baseline through systematic optimization
+
+**Key Achievements:**
+- ✅ Saccades implementation: +1.86% improvement
+- ✅ 50-trial optimization: +2.65% improvement (71.91% accuracy)
+- ✅ Focused 30-trial optimization: +0.02% improvement (71.93% accuracy)
+- ✅ Stable and reproducible results (verified)
+
+See **[FINAL_OPTIMIZATION_REPORT.md](FINAL_OPTIMIZATION_REPORT.md)** for complete optimization details.
+
 ### Quick Start
 
 ```bash
