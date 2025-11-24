@@ -397,6 +397,16 @@ std::string Neuron::toJson() const {
     j["dendriteIds"] = dendriteIds;
     j["spikes"] = spikes;
 
+    // Serialize position if set
+    if (hasPosition()) {
+        const Position3D& pos = getPosition();
+        j["position"] = {
+            {"x", pos.x},
+            {"y", pos.y},
+            {"z", pos.z}
+        };
+    }
+
     // Serialize BinaryPatterns as arrays of spike counts
     json patternsJson = json::array();
     for (const auto& pattern : referencePatterns) {
@@ -423,6 +433,16 @@ bool Neuron::fromJson(const std::string& jsonStr) {
 
         // Deserialize ID from base class
         setId(j["id"]);
+
+        // Deserialize position if present
+        if (j.contains("position")) {
+            float x = j["position"]["x"].get<float>();
+            float y = j["position"]["y"].get<float>();
+            float z = j["position"]["z"].get<float>();
+            setPosition(x, y, z);
+        } else {
+            clearPosition();
+        }
 
         // Deserialize fields
         windowSize = j["windowSize"];

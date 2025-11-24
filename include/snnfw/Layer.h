@@ -92,6 +92,17 @@ public:
         j["type"] = "Layer";
         j["id"] = getId();
         j["clusterIds"] = clusterIds;
+
+        // Serialize position if set
+        if (hasPosition()) {
+            const Position3D& pos = getPosition();
+            j["position"] = {
+                {"x", pos.x},
+                {"y", pos.y},
+                {"z", pos.z}
+            };
+        }
+
         return j.dump();
     }
 
@@ -103,6 +114,17 @@ public:
                 return false;
             }
             setId(j["id"]);
+
+            // Deserialize position if present
+            if (j.contains("position")) {
+                float x = j["position"]["x"].get<float>();
+                float y = j["position"]["y"].get<float>();
+                float z = j["position"]["z"].get<float>();
+                setPosition(x, y, z);
+            } else {
+                clearPosition();
+            }
+
             clusterIds = j["clusterIds"].get<std::vector<uint64_t>>();
             return true;
         } catch (const std::exception& e) {

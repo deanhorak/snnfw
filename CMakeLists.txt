@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(snnfw 
+project(snnfw
     VERSION 1.0.0
     DESCRIPTION "Spiking Neural Network Framework"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # Set C++ standard
@@ -130,6 +130,50 @@ else()
     endif()
 endif()
 
+# Visualization dependencies
+set(GLFW_DIR ${CMAKE_SOURCE_DIR}/third_party/glfw)
+set(GLAD_DIR ${CMAKE_SOURCE_DIR}/third_party/glad)
+set(GLM_DIR ${CMAKE_SOURCE_DIR}/third_party/glm)
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
+
+# GLFW
+if(EXISTS ${GLFW_DIR})
+    message(STATUS "Found GLFW in third_party")
+    option(GLFW_BUILD_DOCS "Build the GLFW documentation" OFF)
+    option(GLFW_BUILD_TESTS "Build the GLFW test programs" OFF)
+    option(GLFW_BUILD_EXAMPLES "Build the GLFW example programs" OFF)
+    add_subdirectory(${GLFW_DIR})
+else()
+    message(WARNING "GLFW not found in third_party - visualization will not be available")
+endif()
+
+# GLAD
+if(EXISTS ${GLAD_DIR})
+    message(STATUS "Found GLAD in third_party")
+    add_library(glad STATIC ${GLAD_DIR}/src/glad.c)
+    target_include_directories(glad PUBLIC ${GLAD_DIR}/include)
+else()
+    message(WARNING "GLAD not found in third_party - visualization will not be available")
+endif()
+
+# ImGui
+if(EXISTS ${IMGUI_DIR})
+    message(STATUS "Found ImGui in third_party")
+    add_library(imgui STATIC
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_demo.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+    target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+    target_link_libraries(imgui PUBLIC glfw glad)
+else()
+    message(WARNING "ImGui not found in third_party - visualization will not be available")
+endif()
+
 # Source files for library
 set(LIB_SOURCES
     src/Neuron.cpp
@@ -169,10 +213,51 @@ set(LIB_SOURCES
     src/learning/MergeSimilarStrategy.cpp
     src/learning/HybridStrategy.cpp
     src/learning/PatternUpdateStrategyFactory.cpp
+    src/NetworkInspector.cpp
+    src/ActivityMonitor.cpp
+    src/PerformanceProfiler.cpp
+    src/NetworkValidator.cpp
+    src/NetworkBuilder.cpp
+    src/ConnectivityPattern.cpp
+    src/ConnectivityBuilder.cpp
+    src/ModelImporter.cpp
 )
+
+# Visualization sources (optional)
+if(EXISTS ${GLFW_DIR} AND EXISTS ${GLAD_DIR} AND EXISTS ${IMGUI_DIR})
+    list(APPEND LIB_SOURCES
+        src/Camera.cpp
+        src/ShaderManager.cpp
+        src/GeometryRenderer.cpp
+        src/VisualizationManager.cpp
+        src/NetworkDataAdapter.cpp
+        src/LayoutEngine.cpp
+        src/NetworkGraphRenderer.cpp
+        src/ActivityVisualizer.cpp
+        src/SpikeRenderer.cpp
+        src/RecordingManager.cpp
+        src/RasterPlotRenderer.cpp
+        src/InteractionManager.cpp
+        src/PatternDetector.cpp
+        src/ActivityHistogram.cpp
+    )
+    set(VISUALIZATION_ENABLED TRUE)
+    message(STATUS "Visualization support ENABLED")
+else()
+    set(VISUALIZATION_ENABLED FALSE)
+    message(STATUS "Visualization support DISABLED (missing dependencies)")
+endif()
 
 # Create the library
 add_library(${PROJECT_NAME} ${LIB_SOURCES})
+
+# Find HDF5
+find_package(HDF5 COMPONENTS C)
+if(HDF5_FOUND)
+    message(STATUS "HDF5 found: ${HDF5_VERSION}")
+else()
+    message(WARNING "HDF5 not found - HDF5 import will not be available")
+endif()
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME}
@@ -182,6 +267,13 @@ target_link_libraries(${PROJECT_NAME}
         nlohmann_json::nlohmann_json
 )
 
+# Link HDF5 if found
+if(HDF5_FOUND)
+    target_link_libraries(${PROJECT_NAME} PUBLIC ${HDF5_LIBRARIES} curl)
+    target_include_directories(${PROJECT_NAME} PUBLIC ${HDF5_INCLUDE_DIRS})
+    message(STATUS "Linking HDF5: ${HDF5_LIBRARIES}")
+endif()
+
 # Link RocksDB if found
 if(RocksDB_FOUND)
     target_link_libraries(${PROJECT_NAME} PUBLIC RocksDB::rocksdb)
@@ -190,6 +282,13 @@ elseif(ROCKSDB_LIBRARIES)
     target_link_libraries(${PROJECT_NAME} PUBLIC ${ROCKSDB_LIBRARIES})
     target_include_directories(${PROJECT_NAME} PUBLIC ${ROCKSDB_INCLUDE_DIRS})
     message(STATUS "Linking RocksDB manually: ${ROCKSDB_LIBRARIES}")
+endif()
+
+# Link visualization libraries if enabled
+if(VISUALIZATION_ENABLED)
+    target_link_libraries(${PROJECT_NAME} PUBLIC glfw glad imgui)
+    target_include_directories(${PROJECT_NAME} PUBLIC ${GLM_DIR})
+    message(STATUS "Linking visualization libraries")
 endif()
 
 # Set target properties
@@ -224,6 +323,27 @@ target_link_libraries(experiment_config_example ${PROJECT_NAME})
 
 add_executable(realtime_spike_example examples/realtime_spike_example.cpp)
 target_link_libraries(realtime_spike_example ${PROJECT_NAME})
+
+add_executable(position_import_example examples/position_import_example.cpp)
+target_link_libraries(position_import_example ${PROJECT_NAME})
+
+add_executable(neuroml_hdf5_import_example examples/neuroml_hdf5_import_example.cpp)
+target_link_libraries(neuroml_hdf5_import_example ${PROJECT_NAME})
+
+# Visualization demos (if enabled)
+if(VISUALIZATION_ENABLED)
+    add_executable(visualization_demo examples/visualization_demo.cpp)
+    target_link_libraries(visualization_demo ${PROJECT_NAME})
+    message(STATUS "Added visualization_demo executable")
+
+    add_executable(network_visualization_demo examples/network_visualization_demo.cpp)
+    target_link_libraries(network_visualization_demo ${PROJECT_NAME})
+    message(STATUS "Added network_visualization_demo executable")
+
+    add_executable(activity_demo examples/activity_demo.cpp)
+    target_link_libraries(activity_demo ${PROJECT_NAME})
+    message(STATUS "Added activity_demo executable")
+endif()
 
 # Experiments
 add_executable(mnist_learning experiments/mnist_learning.cpp)

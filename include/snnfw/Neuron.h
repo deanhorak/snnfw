@@ -101,6 +101,24 @@ public:
     SimilarityMetric getSimilarityMetric() const { return similarityMetric_; }
 
     /**
+     * @brief Get the window size in milliseconds
+     * @return Window size in milliseconds
+     */
+    double getWindowSize() const { return windowSize; }
+
+    /**
+     * @brief Get the similarity threshold
+     * @return Similarity threshold (0.0 to 1.0)
+     */
+    double getSimilarityThreshold() const { return threshold; }
+
+    /**
+     * @brief Get the maximum number of reference patterns
+     * @return Maximum number of reference patterns
+     */
+    size_t getMaxReferencePatterns() const { return maxPatterns; }
+
+    /**
      * @brief Print current rolling window of spikes
      */
     void printSpikes() const;

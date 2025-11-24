@@ -66,13 +66,36 @@ Automated hyperparameter tuning with multiple optimization strategies:
 - **Resume Capability** - Continue interrupted optimization runs
 - **JSON Configuration** - Easy parameter space specification
 
+### 🎨 3D Visualization System (NEW!)
+Real-time OpenGL-based visualization of network structure and activity:
+- **Network Structure** - 3D visualization of hierarchical brain organization
+- **Activity Visualization** - Real-time spike events with particle systems
+- **Layout Algorithms** - Force-directed, hierarchical, and grid layouts
+- **Interactive Camera** - Mouse/keyboard controls with pan/zoom/rotate
+- **Recording & Playback** - Save and replay network activity
+- **Raster Plots** - Traditional neuroscience spike visualization
+- **Pattern Detection** - Visual highlighting of detected patterns
+- **ImGui Interface** - Interactive controls and statistics
+
+### 📥 Model Import & Position Storage (NEW!)
+Import neuron positions from industry-standard neuroscience formats:
+- **NeuroML** - XML-based model description language (NeuroML v2)
+- **HDF5** - High-performance binary format (SONATA, NWB, generic)
+- **CSV** - Simple comma-separated position files
+- **SWC** - NEURON morphology files
+- **NEST JSON** - NEST simulator export format
+- **Position Storage** - 3D coordinates stored in all neural objects
+- **Position Transformation** - Scale and offset for coordinate system conversion
+- **Hybrid Layouts** - Mix imported positions with computed layouts
+- **Visualization Integration** - Imported positions automatically used in 3D view
+
 ### Advanced Features
 - **64-bit Unique IDs** - Support for brain-scale networks (100 trillion objects per type)
 - **ID-Based Storage** - Memory-efficient ID references instead of pointers
 - **Factory Pattern** - Centralized object creation with automatic ID assignment
 - **Multithreading** - ThreadPool, ThreadSafe<T>, ThreadSafeRW<T>, AtomicCounter
 - **Fast Logging** - spdlog-based logging with configurable levels
-- **Comprehensive Tests** - 202 unit tests with 100% pass rate
+- **Comprehensive Tests** - 121+ unit tests with 97.6% pass rate
 
 ## 🚀 Quick Start
 
