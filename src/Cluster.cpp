@@ -47,6 +47,17 @@ std::string Cluster::toJson() const {
     j["type"] = "Cluster";
     j["id"] = getId();
     j["neuronIds"] = neuronIds;
+
+    // Serialize position if set
+    if (hasPosition()) {
+        const Position3D& pos = getPosition();
+        j["position"] = {
+            {"x", pos.x},
+            {"y", pos.y},
+            {"z", pos.z}
+        };
+    }
+
     return j.dump();
 }
 
@@ -61,6 +72,16 @@ bool Cluster::fromJson(const std::string& jsonStr) {
 
         // Deserialize ID from base class
         setId(j["id"]);
+
+        // Deserialize position if present
+        if (j.contains("position")) {
+            float x = j["position"]["x"].get<float>();
+            float y = j["position"]["y"].get<float>();
+            float z = j["position"]["z"].get<float>();
+            setPosition(x, y, z);
+        } else {
+            clearPosition();
+        }
 
         neuronIds = j["neuronIds"].get<std::vector<uint64_t>>();
 

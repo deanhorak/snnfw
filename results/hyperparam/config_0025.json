@@ -1,0 +1,70 @@
+{
+  "experiment": {
+    "name": "mnist_hyperparam_search",
+    "description": "Hyperparameter optimization",
+    "version": "5.0.0"
+  },
+  "network": {
+    "grid_size": 8,
+    "region_size": 3,
+    "num_orientations": 8,
+    "neurons_per_feature": 1,
+    "temporal_window_ms": 200.0,
+    "edge_threshold": 0.15,
+    "orientations_degrees": [
+      0,
+      22.5,
+      45,
+      67.5,
+      90,
+      112.5,
+      135,
+      157.5
+    ]
+  },
+  "neuron": {
+    "window_size_ms": 200.0,
+    "similarity_threshold": 0.8,
+    "max_patterns": 75
+  },
+  "adapters": {
+    "retina": {
+      "type": "retina",
+      "enabled": true,
+      "temporal_window_ms": 200.0,
+      "parameters": {
+        "grid_size": 8,
+        "num_orientations": 8,
+        "edge_threshold": 0.15,
+        "neuron_window_size": 200.0,
+        "neuron_threshold": 0.8,
+        "neuron_max_patterns": 75,
+        "edge_operator": "sobel",
+        "encoding_strategy": "rate"
+      }
+    }
+  },
+  "training": {
+    "examples_per_digit": 1000,
+    "test_images": 2000,
+    "num_digits": 10
+  },
+  "classification": {
+    "strategy": "majority",
+    "k_neighbors": 5,
+    "distance_exponent": 1.0,
+    "similarity_metric": "cosine"
+  },
+  "data": {
+    "train_images": "/home/dean/repos/ctm/data/MNIST/raw/train-images-idx3-ubyte",
+    "train_labels": "/home/dean/repos/ctm/data/MNIST/raw/train-labels-idx1-ubyte",
+    "test_images": "/home/dean/repos/ctm/data/MNIST/raw/t10k-images-idx3-ubyte",
+    "test_labels": "/home/dean/repos/ctm/data/MNIST/raw/t10k-labels-idx1-ubyte"
+  },
+  "output": {
+    "show_progress": true,
+    "show_confusion_matrix": false,
+    "save_results": true,
+    "results_file": "results/hyperparam_results.json"
+  }
+}

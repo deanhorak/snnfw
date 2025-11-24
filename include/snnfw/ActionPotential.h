@@ -36,15 +36,18 @@ public:
      * @param dendriteId ID of the dendrite to which this action potential is destined
      * @param scheduledTimeMs Time when this action potential should arrive (in ms)
      * @param amplitude Amplitude/strength of the action potential (default: 1.0)
+     * @param dispatchTime Time when this action potential was dispatched (default: 0.0)
      */
     explicit ActionPotential(uint64_t synapseId,
                             uint64_t dendriteId,
                             double scheduledTimeMs,
-                            double amplitude = 1.0)
+                            double amplitude = 1.0,
+                            double dispatchTime = 0.0)
         : EventObject(scheduledTimeMs),
           synapseId(synapseId),
           dendriteId(dendriteId),
-          amplitude(amplitude) {}
+          amplitude(amplitude),
+          dispatchTime(dispatchTime) {}
 
     /**
      * @brief Get the ID of the originating synapse
@@ -71,6 +74,18 @@ public:
     void setAmplitude(double amp) { amplitude = amp; }
 
     /**
+     * @brief Get the dispatch time of this action potential
+     * @return Time when this action potential was dispatched (in ms)
+     */
+    double getDispatchTime() const { return dispatchTime; }
+
+    /**
+     * @brief Set the dispatch time of this action potential
+     * @param time Time when this action potential was dispatched (in ms)
+     */
+    void setDispatchTime(double time) { dispatchTime = time; }
+
+    /**
      * @brief Get the type of this event
      * @return String identifier "ActionPotential"
      */
@@ -80,6 +95,7 @@ private:
     uint64_t synapseId;   ///< ID of the synapse from which this AP originated
     uint64_t dendriteId;  ///< ID of the dendrite to which this AP is destined
     double amplitude;     ///< Amplitude/strength of the action potential
+    double dispatchTime;  ///< Time when this action potential was dispatched
 };
 
 } // namespace snnfw

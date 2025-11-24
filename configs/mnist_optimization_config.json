@@ -1,0 +1,64 @@
+{
+  "experiment": {
+    "name": "mnist_hyperparameter_optimization",
+    "description": "Automated hyperparameter optimization for MNIST",
+    "version": "1.0.0"
+  },
+  "mnist_data_path": "../data/mnist",
+  "optimization": {
+    "strategy": "random",
+    "max_iterations": 50,
+    "num_workers": 1,
+    "save_intermediate_results": true,
+    "results_dir": "optimization_results"
+  },
+  "training": {
+    "samples_per_digit": 1000,
+    "test_samples": 1000
+  },
+  "parameter_space": {
+    "network.grid_size": {
+      "type": "integer",
+      "min": 5,
+      "max": 9,
+      "step": 1
+    },
+    "network.num_orientations": {
+      "type": "integer",
+      "min": 4,
+      "max": 12,
+      "step": 2
+    },
+    "network.edge_threshold": {
+      "type": "double",
+      "min": 0.05,
+      "max": 0.3,
+      "step": 0.05
+    },
+    "neuron.similarity_threshold": {
+      "type": "double",
+      "min": 0.5,
+      "max": 0.9,
+      "step": 0.1
+    },
+    "neuron.max_patterns": {
+      "type": "integer",
+      "min": 20,
+      "max": 200,
+      "step": 20
+    },
+    "neuron.window_size_ms": {
+      "type": "double",
+      "min": 50.0,
+      "max": 300.0,
+      "step": 50.0
+    },
+    "classification.k_neighbors": {
+      "type": "integer",
+      "min": 1,
+      "max": 15,
+      "step": 2
+    }
+  }
+}
+

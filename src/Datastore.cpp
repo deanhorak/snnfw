@@ -5,6 +5,13 @@
 #include "snnfw/Dendrite.h"
 #include "snnfw/Synapse.h"
 #include "snnfw/Cluster.h"
+#include "snnfw/Layer.h"
+#include "snnfw/Column.h"
+#include "snnfw/Nucleus.h"
+#include "snnfw/Region.h"
+#include "snnfw/Lobe.h"
+#include "snnfw/Hemisphere.h"
+#include "snnfw/Brain.h"
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <nlohmann/json.hpp>
@@ -155,6 +162,41 @@ std::shared_ptr<Synapse> Datastore::getSynapse(uint64_t id) {
 std::shared_ptr<Cluster> Datastore::getCluster(uint64_t id) {
     auto obj = get(id);
     return std::dynamic_pointer_cast<Cluster>(obj);
+}
+
+std::shared_ptr<Layer> Datastore::getLayer(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Layer>(obj);
+}
+
+std::shared_ptr<Column> Datastore::getColumn(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Column>(obj);
+}
+
+std::shared_ptr<Nucleus> Datastore::getNucleus(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Nucleus>(obj);
+}
+
+std::shared_ptr<Region> Datastore::getRegion(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Region>(obj);
+}
+
+std::shared_ptr<Lobe> Datastore::getLobe(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Lobe>(obj);
+}
+
+std::shared_ptr<Hemisphere> Datastore::getHemisphere(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Hemisphere>(obj);
+}
+
+std::shared_ptr<Brain> Datastore::getBrain(uint64_t id) {
+    auto obj = get(id);
+    return std::dynamic_pointer_cast<Brain>(obj);
 }
 
 void Datastore::markDirty(uint64_t id) {

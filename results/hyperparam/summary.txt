@@ -1,0 +1,24 @@
+Hyperparameter Optimization Summary
+================================================================================
+
+Total experiments: 28
+Best accuracy: 90.10%
+Best configuration:
+  edge_threshold: 0.15
+  k_neighbors: 3
+  similarity_threshold: 0.7
+  temporal_window_ms: 200.0
+  max_patterns: 100
+
+Top 10 Results:
+--------------------------------------------------------------------------------
+1. Accuracy: 90.10% - {'edge_threshold': 0.15, 'k_neighbors': 3, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+2. Accuracy: 90.00% - {'edge_threshold': 0.25, 'k_neighbors': 3, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+3. Accuracy: 89.95% - {'edge_threshold': 0.15, 'k_neighbors': 5, 'similarity_threshold': 0.6, 'temporal_window_ms': 200.0, 'max_patterns': 150}
+4. Accuracy: 89.95% - {'edge_threshold': 0.15, 'k_neighbors': 5, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 150}
+5. Accuracy: 89.95% - {'edge_threshold': 0.15, 'k_neighbors': 5, 'similarity_threshold': 0.75, 'temporal_window_ms': 200.0, 'max_patterns': 150}
+6. Accuracy: 89.95% - {'edge_threshold': 0.15, 'k_neighbors': 5, 'similarity_threshold': 0.8, 'temporal_window_ms': 200.0, 'max_patterns': 150}
+7. Accuracy: 89.90% - {'edge_threshold': 0.2, 'k_neighbors': 7, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+8. Accuracy: 89.85% - {'edge_threshold': 0.25, 'k_neighbors': 7, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+9. Accuracy: 89.80% - {'edge_threshold': 0.1, 'k_neighbors': 5, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+10. Accuracy: 89.80% - {'edge_threshold': 0.15, 'k_neighbors': 9, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}

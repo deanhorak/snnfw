@@ -1,0 +1,69 @@
+[2025-10-18 23:04:44.065] [info] Loaded configuration from: ../results/edge_fine/config_edge0.160.json
+=== MNIST Classification Strategy Comparison ===
+Configuration: ../results/edge_fine/config_edge0.160.json
+Training: 5000 examples per digit
+Testing: 10000 images
+k-NN: k=5
+Strategy: majority
+Distance Exponent: 1
+
+Loading MNIST training data...
+[2025-10-18 23:04:44.066] [info] MNIST Images: 60000 images, 28x28 pixels
+[2025-10-18 23:04:44.127] [info] Successfully loaded 60000 images
+[2025-10-18 23:04:44.127] [info] MNIST Labels: 60000 labels in file
+[2025-10-18 23:04:44.129] [info] Successfully loaded 60000 labels
+Loading MNIST test data...
+[2025-10-18 23:04:44.129] [info] MNIST Images: 10000 images, 28x28 pixels
+[2025-10-18 23:04:44.140] [info] Successfully loaded 10000 images
+[2025-10-18 23:04:44.140] [info] MNIST Labels: 10000 labels in file
+[2025-10-18 23:04:44.140] [info] Successfully loaded 10000 labels
+Creating RetinaAdapter...
+[2025-10-18 23:04:44.140] [info] RetinaAdapter 'retina': grid=8x8, orientations=8, threshold=0.16, edge=sobel, encoding=rate
+[2025-10-18 23:04:44.140] [info] RetinaAdapter 'retina': initialized with 512 neurons
+RetinaAdapter initialized with 512 neurons
+
+Using classification strategy: MajorityVoting
+
+=== Training Phase ===
+Training digit 0...
+[2025-10-18 23:04:44.141] [info] RetinaAdapter 'retina': inferred image size 28x28, region size 3
+Training digit 1...
+Training digit 2...
+Training digit 3...
+Training digit 4...
+Training digit 5...
+Training digit 6...
+Training digit 7...
+Training digit 8...
+Training digit 9...
+Training complete. Stored 50000 patterns.
+Training time: 63.601 seconds
+
+=== Testing Phase ===
+Testing sample 0/10000
+Testing sample 1000/10000
+Testing sample 2000/10000
+Testing sample 3000/10000
+Testing sample 4000/10000
+Testing sample 5000/10000
+Testing sample 6000/10000
+Testing sample 7000/10000
+Testing sample 8000/10000
+Testing sample 9000/10000
+
+=== Results ===
+Strategy: MajorityVoting
+Overall Accuracy: 94.92% (9492/10000)
+Testing time: 479.322 seconds
+
+Per-digit accuracy:
+  Digit 0: 99.2% (972/980)
+  Digit 1: 98.7% (1120/1135)
+  Digit 2: 94.9% (979/1032)
+  Digit 3: 93.4% (943/1010)
+  Digit 4: 89.0% (874/982)
+  Digit 5: 95.3% (850/892)
+  Digit 6: 98.0% (939/958)
+  Digit 7: 92.8% (954/1028)
+  Digit 8: 92.7% (903/974)
+  Digit 9: 94.9% (958/1009)

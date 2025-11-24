@@ -1,0 +1,75 @@
+{
+  "experiment": {
+    "name": "mnist_gabor_temporal",
+    "description": "MNIST with Gabor filters + Temporal encoding (HIGH IMPACT - Expected 95-96% accuracy)",
+    "version": "3.0.0"
+  },
+  "network": {
+    "grid_size": 7,
+    "region_size": 4,
+    "num_orientations": 8,
+    "neurons_per_feature": 1,
+    "temporal_window_ms": 200.0,
+    "edge_threshold": 0.15,
+    "orientations_degrees": [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5]
+  },
+  "neuron": {
+    "window_size_ms": 200.0,
+    "similarity_threshold": 0.7,
+    "max_patterns": 100
+  },
+  "adapters": {
+    "retina": {
+      "type": "retina",
+      "enabled": true,
+      "temporal_window_ms": 200.0,
+      "parameters": {
+        "grid_size": 7,
+        "num_orientations": 8,
+        "edge_threshold": 0.15,
+        "neuron_window_size": 200.0,
+        "neuron_threshold": 0.7,
+        "neuron_max_patterns": 100,
+        "edge_operator": "gabor",
+        "encoding_strategy": "temporal",
+        "wavelength": 2.0,
+        "sigma": 1.0,
+        "gamma": 0.5,
+        "phase_offset": 0.0,
+        "kernel_size": 3,
+        "dual_spike_mode": 1,
+        "timing_jitter": 0.5,
+        "min_spike_interval": 5.0
+      }
+    }
+  },
+  "training": {
+    "examples_per_digit": 5000,
+    "test_images": 10000,
+    "num_digits": 10
+  },
+  "classification": {
+    "method": "knn",
+    "k_neighbors": 5,
+    "similarity_metric": "cosine"
+  },
+  "data": {
+    "train_images": "/home/dean/repos/ctm/data/MNIST/raw/train-images-idx3-ubyte",
+    "train_labels": "/home/dean/repos/ctm/data/MNIST/raw/train-labels-idx1-ubyte",
+    "test_images": "/home/dean/repos/ctm/data/MNIST/raw/t10k-images-idx3-ubyte",
+    "test_labels": "/home/dean/repos/ctm/data/MNIST/raw/t10k-labels-idx1-ubyte"
+  },
+  "sonata": {
+    "network_file": "../configs/mnist_network.h5",
+    "use_sonata": true,
+    "node_population": "layer1_neurons",
+    "edge_population": "layer1_connections"
+  },
+  "output": {
+    "show_progress": true,
+    "show_confusion_matrix": true,
+    "save_results": true,
+    "results_file": "results/mnist_gabor_temporal_results.json"
+  }
+}
+

@@ -1,0 +1,86 @@
+=== OpenMP Thread Count Benchmark ===
+Testing MNIST V1 Hierarchical with different thread counts
+
+=========================================
+Testing with 1 threads...
+=========================================
+OpenMP: Using 1 threads for k-NN classification
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 202.1s
+  Testing:  1223.3s
+
+=========================================
+Testing with 4 threads...
+=========================================
+OpenMP: Using 4 threads for k-NN classification
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 204.3s
+  Testing:  311.6s
+
+=========================================
+Testing with 8 threads...
+=========================================
+OpenMP: Using 8 threads for k-NN classification
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 204.2s
+  Testing:  165.2s
+
+=========================================
+Testing with 12 threads...
+=========================================
+OpenMP: Using 12 threads for k-NN classification
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 204.9s
+  Testing:  127.6s
+
+=========================================
+Testing with 16 threads...
+=========================================
+OpenMP: Using 16 threads for k-NN classification
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 203.4s
+  Testing:  118.8s
+
+=========================================
+Testing with 20 threads...
+=========================================
+OpenMP: Using 20 threads for k-NN classification
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 201.7s
+  Testing:  115.5s
+
+=========================================
+Benchmark Complete!
+=========================================
+
+Summary:
+--- 1 threads ---
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 202.1s
+  Testing:  1223.3s
+
+--- 4 threads ---
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 204.3s
+  Testing:  311.6s
+
+--- 8 threads ---
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 204.2s
+  Testing:  165.2s
+
+--- 12 threads ---
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 204.9s
+  Testing:  127.6s
+
+--- 16 threads ---
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 203.4s
+  Testing:  118.8s
+
+--- 20 threads ---
+Overall Accuracy: 95.20% (9520/10000)
+  Training: 201.7s
+  Testing:  115.5s
+

@@ -6,7 +6,9 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>
+#include <vector>
 #include "snnfw/Logger.h"
+#include "snnfw/adapters/BaseAdapter.h"
 
 namespace snnfw {
 
@@ -174,6 +176,71 @@ public:
             SNNFW_ERROR("Failed to save configuration: {}", e.what());
             return false;
         }
+    }
+
+    /**
+     * @brief Create adapter configuration from JSON section
+     * @param adapterName Name of the adapter in the config (e.g., "retina", "audio")
+     * @return BaseAdapter::Config structure populated from JSON
+     * @throws std::runtime_error if adapter section doesn't exist
+     */
+    adapters::BaseAdapter::Config getAdapterConfig(const std::string& adapterName) const {
+        std::string adapterPath = "/adapters/" + adapterName;
+
+        if (!has(adapterPath)) {
+            throw std::runtime_error("Adapter configuration '" + adapterName + "' not found");
+        }
+
+        json adapterJson = getSection(adapterPath);
+
+        adapters::BaseAdapter::Config config;
+        config.name = adapterName;
+        config.type = adapterJson.value("type", adapterName);
+        config.temporalWindow = adapterJson.value("temporal_window_ms", 200.0);
+
+        // Extract parameters by type
+        if (adapterJson.contains("parameters")) {
+            json params = adapterJson["parameters"];
+
+            for (auto& [key, value] : params.items()) {
+                if (value.is_number_float()) {
+                    config.doubleParams[key] = value.get<double>();
+                } else if (value.is_number_integer()) {
+                    config.intParams[key] = value.get<int>();
+                } else if (value.is_string()) {
+                    config.stringParams[key] = value.get<std::string>();
+                }
+            }
+        }
+
+        return config;
+    }
+
+    /**
+     * @brief Get list of all configured adapters
+     * @return Vector of adapter names
+     */
+    std::vector<std::string> getAdapterNames() const {
+        std::vector<std::string> names;
+
+        if (!has("/adapters")) {
+            return names;
+        }
+
+        json adaptersJson = getSection("/adapters");
+        for (auto& [key, value] : adaptersJson.items()) {
+            names.push_back(key);
+        }
+
+        return names;
+    }
+
+    /**
+     * @brief Check if adapters are configured
+     * @return true if adapters section exists, false otherwise
+     */
+    bool hasAdapters() const {
+        return has("/adapters");
     }
 
 private:

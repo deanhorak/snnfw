@@ -1,0 +1,31 @@
+{
+  "description": "Small parameter space for quick optimization testing",
+  "parameters": [
+    {
+      "name": "/neuron/window_size_ms",
+      "type": "discrete",
+      "values": [75.0, 100.0, 125.0]
+    },
+    {
+      "name": "/neuron/similarity_threshold",
+      "type": "discrete",
+      "values": [0.80, 0.85, 0.90]
+    },
+    {
+      "name": "/training/examples_per_letter",
+      "type": "discrete",
+      "values": [400, 600, 800]
+    },
+    {
+      "name": "/architecture/columns/num_orientations",
+      "type": "discrete",
+      "values": [4, 6, 8]
+    },
+    {
+      "name": "/architecture/layers/layer23_neurons",
+      "type": "discrete",
+      "values": [192, 256]
+    }
+  ]
+}
+

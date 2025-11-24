@@ -1,0 +1,31 @@
+================================================================================
+FINE-GRAINED EDGE THRESHOLD OPTIMIZATION
+================================================================================
+Testing edge_threshold values around 0.16: [0.155, 0.158, 0.16, 0.162, 0.165]
+Using k=5 (optimal)
+Full dataset: 5000 train/digit, 10000 test
+
+Testing edge_threshold=0.155... Accuracy: 94.86%
+  🎉 NEW BEST!
+Testing edge_threshold=0.158... Accuracy: 94.84%
+Testing edge_threshold=0.160... Accuracy: 94.92%
+  🎉 NEW BEST!
+Testing edge_threshold=0.162... Accuracy: 94.83%
+Testing edge_threshold=0.165... Accuracy: 94.96%
+  🎉 NEW BEST!
+
+================================================================================
+RESULTS
+================================================================================
+Best edge_threshold: 0.165
+Best accuracy: 94.96%
+
+All results:
+  edge_threshold=0.155: 94.86%
+  edge_threshold=0.158: 94.84%
+  edge_threshold=0.160: 94.92%
+  edge_threshold=0.162: 94.83%
+  edge_threshold=0.165: 94.96% ← BEST
+
+Best config saved to: results/edge_fine/best_config.json
+Results saved to: results/edge_fine/

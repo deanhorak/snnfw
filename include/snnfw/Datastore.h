@@ -114,6 +114,55 @@ public:
     std::shared_ptr<class Cluster> getCluster(uint64_t id);
 
     /**
+     * @brief Retrieve a Layer by ID (type-safe convenience method)
+     * @param id Layer ID
+     * @return Shared pointer to the Layer, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Layer> getLayer(uint64_t id);
+
+    /**
+     * @brief Retrieve a Column by ID (type-safe convenience method)
+     * @param id Column ID
+     * @return Shared pointer to the Column, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Column> getColumn(uint64_t id);
+
+    /**
+     * @brief Retrieve a Nucleus by ID (type-safe convenience method)
+     * @param id Nucleus ID
+     * @return Shared pointer to the Nucleus, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Nucleus> getNucleus(uint64_t id);
+
+    /**
+     * @brief Retrieve a Region by ID (type-safe convenience method)
+     * @param id Region ID
+     * @return Shared pointer to the Region, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Region> getRegion(uint64_t id);
+
+    /**
+     * @brief Retrieve a Lobe by ID (type-safe convenience method)
+     * @param id Lobe ID
+     * @return Shared pointer to the Lobe, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Lobe> getLobe(uint64_t id);
+
+    /**
+     * @brief Retrieve a Hemisphere by ID (type-safe convenience method)
+     * @param id Hemisphere ID
+     * @return Shared pointer to the Hemisphere, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Hemisphere> getHemisphere(uint64_t id);
+
+    /**
+     * @brief Retrieve a Brain by ID (type-safe convenience method)
+     * @param id Brain ID
+     * @return Shared pointer to the Brain, or nullptr if not found or wrong type
+     */
+    std::shared_ptr<class Brain> getBrain(uint64_t id);
+
+    /**
      * @brief Mark an object as dirty (modified) so it will be written back on eviction
      * @param id Object ID
      */

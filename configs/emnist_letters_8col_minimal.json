@@ -1,0 +1,55 @@
+{
+  "neuron": {
+    "window_size_ms": 100.0,
+    "similarity_threshold": 0.85,
+    "max_patterns": 400
+  },
+  "spike_processor": {
+    "num_threads": 20,
+    "time_slice_ms": 1.0,
+    "real_time_sync": false
+  },
+  "training": {
+    "examples_per_letter": 800,
+    "test_images": 20800
+  },
+  "data": {
+    "train_images": "/home/dean/repos/ctm/data/raw/emnist-letters-train-images-idx3-ubyte",
+    "train_labels": "/home/dean/repos/ctm/data/raw/emnist-letters-train-labels-idx1-ubyte",
+    "test_images": "/home/dean/repos/ctm/data/raw/emnist-letters-test-images-idx3-ubyte",
+    "test_labels": "/home/dean/repos/ctm/data/raw/emnist-letters-test-labels-idx1-ubyte"
+  },
+  "architecture": {
+    "columns": {
+      "num_orientations": 4,
+      "num_frequencies": 2,
+      "num_center_surround_scales": 0,
+      "num_center_surround_types": 2,
+      "num_blob_scales": 0,
+      "num_blob_types": 0,
+      "num_specialized_detectors": 0
+    },
+    "layers": {
+      "layer1_neurons": 32,
+      "layer23_neurons": 128,
+      "layer4_size": 7,
+      "layer5_neurons": 49,
+      "layer6_neurons": 32
+    },
+    "connectivity": {
+      "lateral_connectivity": 0.15,
+      "neighbor_range": 1,
+      "recurrent_connectivity": 0.1,
+      "recurrent_weight": 0.3,
+      "recurrent_delay": 2.0
+    },
+    "gabor": {
+      "freq_low": 8.0,
+      "freq_high": 3.0,
+      "threshold": 0.1
+    },
+    "output": {
+      "neurons_per_class": 15
+    }
+  }
+}

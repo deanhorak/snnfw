@@ -1,0 +1,133 @@
+
+================================================================================
+PHASE 1: Coarse Grid Search (edge_threshold, k_neighbors)
+================================================================================
+Using reduced dataset (1000 train/digit, 2000 test) for fast search
+
+================================================================================
+GRID SEARCH
+================================================================================
+Search space: {'edge_threshold': [0.1, 0.15, 0.2, 0.25], 'k_neighbors': [3, 5, 7, 9]}
+Max experiments: 16
+Running 16 experiments...
+
+[1/16] Testing: {'edge_threshold': 0.1, 'k_neighbors': 3}
+Accuracy: 89.60%
+🎉 NEW BEST: 89.60%
+
+[2/16] Testing: {'edge_threshold': 0.1, 'k_neighbors': 5}
+Accuracy: 89.80%
+🎉 NEW BEST: 89.80%
+
+[3/16] Testing: {'edge_threshold': 0.1, 'k_neighbors': 7}
+Accuracy: 89.60%
+
+[4/16] Testing: {'edge_threshold': 0.1, 'k_neighbors': 9}
+Accuracy: 89.15%
+
+[5/16] Testing: {'edge_threshold': 0.15, 'k_neighbors': 3}
+Accuracy: 90.10%
+🎉 NEW BEST: 90.10%
+
+[6/16] Testing: {'edge_threshold': 0.15, 'k_neighbors': 5}
+Accuracy: 89.40%
+
+[7/16] Testing: {'edge_threshold': 0.15, 'k_neighbors': 7}
+Accuracy: 89.45%
+
+[8/16] Testing: {'edge_threshold': 0.15, 'k_neighbors': 9}
+Accuracy: 89.80%
+
+[9/16] Testing: {'edge_threshold': 0.2, 'k_neighbors': 3}
+Accuracy: 89.40%
+
+[10/16] Testing: {'edge_threshold': 0.2, 'k_neighbors': 5}
+Accuracy: 89.20%
+
+[11/16] Testing: {'edge_threshold': 0.2, 'k_neighbors': 7}
+Accuracy: 89.90%
+
+[12/16] Testing: {'edge_threshold': 0.2, 'k_neighbors': 9}
+Accuracy: 89.55%
+
+[13/16] Testing: {'edge_threshold': 0.25, 'k_neighbors': 3}
+Accuracy: 90.00%
+
+[14/16] Testing: {'edge_threshold': 0.25, 'k_neighbors': 5}
+Accuracy: 89.55%
+
+[15/16] Testing: {'edge_threshold': 0.25, 'k_neighbors': 7}
+Accuracy: 89.85%
+
+[16/16] Testing: {'edge_threshold': 0.25, 'k_neighbors': 9}
+Accuracy: 89.55%
+
+Phase 1 Best: 90.10%
+Best config: {'edge_threshold': 0.15, 'k_neighbors': 3, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+
+================================================================================
+PHASE 2: Fine-tuning (similarity_threshold, max_patterns)
+================================================================================
+
+================================================================================
+GRID SEARCH
+================================================================================
+Search space: {'similarity_threshold': [0.6, 0.7, 0.75, 0.8], 'max_patterns': [75, 100, 150]}
+Max experiments: 12
+Running 12 experiments...
+
+[1/12] Testing: {'similarity_threshold': 0.6, 'max_patterns': 75}
+Accuracy: 89.70%
+
+[2/12] Testing: {'similarity_threshold': 0.6, 'max_patterns': 100}
+Accuracy: 89.40%
+
+[3/12] Testing: {'similarity_threshold': 0.6, 'max_patterns': 150}
+Accuracy: 89.95%
+
+[4/12] Testing: {'similarity_threshold': 0.7, 'max_patterns': 75}
+Accuracy: 89.70%
+
+[5/12] Testing: {'similarity_threshold': 0.7, 'max_patterns': 100}
+Accuracy: 89.40%
+
+[6/12] Testing: {'similarity_threshold': 0.7, 'max_patterns': 150}
+Accuracy: 89.95%
+
+[7/12] Testing: {'similarity_threshold': 0.75, 'max_patterns': 75}
+Accuracy: 89.70%
+
+[8/12] Testing: {'similarity_threshold': 0.75, 'max_patterns': 100}
+Accuracy: 89.40%
+
+[9/12] Testing: {'similarity_threshold': 0.75, 'max_patterns': 150}
+Accuracy: 89.95%
+
+[10/12] Testing: {'similarity_threshold': 0.8, 'max_patterns': 75}
+Accuracy: 89.70%
+
+[11/12] Testing: {'similarity_threshold': 0.8, 'max_patterns': 100}
+Accuracy: 89.40%
+
+[12/12] Testing: {'similarity_threshold': 0.8, 'max_patterns': 150}
+Accuracy: 89.95%
+
+================================================================================
+PHASE 3: Final Validation with Full Dataset
+================================================================================
+Best config from search: {'edge_threshold': 0.15, 'k_neighbors': 3, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+Running final validation with 5000 train/digit, 10000 test...
+
+================================================================================
+FINAL VALIDATION RESULTS
+================================================================================
+Search accuracy (reduced dataset): 90.10%
+Final accuracy (full dataset): 94.43%
+Best configuration: {'edge_threshold': 0.15, 'k_neighbors': 3, 'similarity_threshold': 0.7, 'temporal_window_ms': 200.0, 'max_patterns': 100}
+
+Best config saved to: results/hyperparam/best_config_full.json
+
+================================================================================
+OPTIMIZATION COMPLETE
+================================================================================
+Results saved to: results/hyperparam

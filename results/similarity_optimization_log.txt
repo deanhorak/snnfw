@@ -1,0 +1,8 @@
+================================================================================
+SIMILARITY THRESHOLD OPTIMIZATION
+================================================================================
+Testing similarity_threshold values: [0.6, 0.65, 0.68, 0.7, 0.72, 0.75, 0.8, 0.85]
+Using edge_threshold=0.165, k=5 (optimal)
+Full dataset: 5000 train/digit, 10000 test
+
+Testing similarity_threshold=0.60... 

@@ -111,6 +111,17 @@ public:
         j["id"] = getId();
         j["name"] = name;
         j["regionIds"] = regionIds;
+
+        // Serialize position if set
+        if (hasPosition()) {
+            const Position3D& pos = getPosition();
+            j["position"] = {
+                {"x", pos.x},
+                {"y", pos.y},
+                {"z", pos.z}
+            };
+        }
+
         return j.dump();
     }
 
@@ -123,6 +134,17 @@ public:
             }
             setId(j["id"]);
             name = j.value("name", "");
+
+            // Deserialize position if present
+            if (j.contains("position")) {
+                float x = j["position"]["x"].get<float>();
+                float y = j["position"]["y"].get<float>();
+                float z = j["position"]["z"].get<float>();
+                setPosition(x, y, z);
+            } else {
+                clearPosition();
+            }
+
             regionIds = j["regionIds"].get<std::vector<uint64_t>>();
             return true;
         } catch (const std::exception& e) {
