@@ -93,16 +93,49 @@ HierarchyStats NetworkInspector::inspectHierarchy(uint64_t rootId, const std::st
             stats.totalClusters += childStats.totalClusters;
         }
     } else if (typeName == "Lobe") {
+        auto lobe = datastore.getLobe(rootId);
+        if (lobe) {
+            stats.name = lobe->getName();
+            stats.childIds = lobe->getRegionIds();
+            stats.childCount = stats.childIds.size();
+        }
         inspectLobe(rootId, datastore, stats);
     } else if (typeName == "Region") {
+        auto region = datastore.getRegion(rootId);
+        if (region) {
+            stats.name = region->getName();
+            stats.childIds = region->getNucleusIds();
+            stats.childCount = stats.childIds.size();
+        }
         inspectRegion(rootId, datastore, stats);
     } else if (typeName == "Nucleus") {
+        auto nucleus = datastore.getNucleus(rootId);
+        if (nucleus) {
+            stats.name = nucleus->getName();
+            stats.childIds = nucleus->getColumnIds();
+            stats.childCount = stats.childIds.size();
+        }
         inspectNucleus(rootId, datastore, stats);
     } else if (typeName == "Column") {
+        auto column = datastore.getColumn(rootId);
+        if (column) {
+            stats.childIds = column->getLayerIds();
+            stats.childCount = stats.childIds.size();
+        }
         inspectColumn(rootId, datastore, stats);
     } else if (typeName == "Layer") {
+        auto layer = datastore.getLayer(rootId);
+        if (layer) {
+            stats.childIds = layer->getClusterIds();
+            stats.childCount = stats.childIds.size();
+        }
         inspectLayer(rootId, datastore, stats);
     } else if (typeName == "Cluster") {
+        auto cluster = datastore.getCluster(rootId);
+        if (cluster) {
+            stats.childIds = cluster->getNeuronIds();
+            stats.childCount = stats.childIds.size();
+        }
         inspectCluster(rootId, datastore, stats);
     } else {
         SNNFW_ERROR("Unknown hierarchy type: {}", typeName);
@@ -127,8 +160,11 @@ void NetworkInspector::inspectHemisphere(uint64_t hemisphereId, Datastore& datas
     stats.childIds = hemisphere->getLobeIds();
     stats.childCount = stats.childIds.size();
 
+    // Make a copy of childIds before iterating
+    auto lobeIds = stats.childIds;
+
     // Recursively inspect lobes
-    for (uint64_t lobeId : stats.childIds) {
+    for (uint64_t lobeId : lobeIds) {
         inspectLobe(lobeId, datastore, stats);
     }
 }
@@ -146,8 +182,11 @@ void NetworkInspector::inspectLobe(uint64_t lobeId, Datastore& datastore, Hierar
     stats.childIds = lobe->getRegionIds();
     stats.childCount = stats.childIds.size();
 
+    // Make a copy of childIds before iterating
+    auto regionIds = stats.childIds;
+
     // Recursively inspect regions
-    for (uint64_t regionId : stats.childIds) {
+    for (uint64_t regionId : regionIds) {
         inspectRegion(regionId, datastore, stats);
     }
 }
@@ -165,8 +204,11 @@ void NetworkInspector::inspectRegion(uint64_t regionId, Datastore& datastore, Hi
     stats.childIds = region->getNucleusIds();
     stats.childCount = stats.childIds.size();
 
+    // Make a copy of childIds before iterating
+    auto nucleusIds = stats.childIds;
+
     // Recursively inspect nuclei
-    for (uint64_t nucleusId : stats.childIds) {
+    for (uint64_t nucleusId : nucleusIds) {
         inspectNucleus(nucleusId, datastore, stats);
     }
 }
@@ -184,8 +226,11 @@ void NetworkInspector::inspectNucleus(uint64_t nucleusId, Datastore& datastore, 
     stats.childIds = nucleus->getColumnIds();
     stats.childCount = stats.childIds.size();
 
+    // Make a copy of childIds before iterating
+    auto columnIds = stats.childIds;
+
     // Recursively inspect columns
-    for (uint64_t columnId : stats.childIds) {
+    for (uint64_t columnId : columnIds) {
         inspectColumn(columnId, datastore, stats);
     }
 }
@@ -203,8 +248,11 @@ void NetworkInspector::inspectColumn(uint64_t columnId, Datastore& datastore, Hi
     stats.childIds = column->getLayerIds();
     stats.childCount = stats.childIds.size();
 
+    // Make a copy of childIds before iterating, since inspectLayer will overwrite stats.childIds
+    auto layerIds = stats.childIds;
+
     // Recursively inspect layers
-    for (uint64_t layerId : stats.childIds) {
+    for (uint64_t layerId : layerIds) {
         inspectLayer(layerId, datastore, stats);
     }
 }
@@ -222,8 +270,11 @@ void NetworkInspector::inspectLayer(uint64_t layerId, Datastore& datastore, Hier
     stats.childIds = layer->getClusterIds();
     stats.childCount = stats.childIds.size();
 
+    // Make a copy of childIds before iterating, since inspectCluster will overwrite stats.childIds
+    auto clusterIds = stats.childIds;
+
     // Recursively inspect clusters
-    for (uint64_t clusterId : stats.childIds) {
+    for (uint64_t clusterId : clusterIds) {
         inspectCluster(clusterId, datastore, stats);
     }
 }

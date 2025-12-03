@@ -11,23 +11,64 @@
 namespace snnfw {
 
 RecordingManager::RecordingManager(ActivityVisualizer& visualizer)
-    : visualizer_(visualizer)
+    : visualizer_(&visualizer)
     , recording_(false)
     , recordingStartTime_(0)
+    , streamingMode_(false)
+    , streamingFile_(nullptr)
+    , streamedSpikeCount_(0)
+    , playbackIndex_(0)
+{
+}
+
+RecordingManager::RecordingManager()
+    : visualizer_(nullptr)
+    , recording_(false)
+    , recordingStartTime_(0)
+    , streamingMode_(false)
+    , streamingFile_(nullptr)
+    , streamedSpikeCount_(0)
     , playbackIndex_(0)
 {
 }
 
 RecordingManager::~RecordingManager() {
+    if (streamingFile_) {
+        if (streamingFile_->is_open()) {
+            updateFileHeader();
+            streamingFile_->close();
+        }
+        delete streamingFile_;
+    }
 }
 
-void RecordingManager::startRecording() {
+void RecordingManager::startRecording(bool streamToFile, const std::string& filename) {
     if (recording_) return;
 
     recording_ = true;
     recordingStartTime_ = 0;  // Will be set on first spike
-    spikes_.clear();
-    
+    streamingMode_ = streamToFile;
+    streamedSpikeCount_ = 0;
+
+    if (streamingMode_) {
+        // Streaming mode - open file and write header
+        streamingFilename_ = filename;
+        streamingFile_ = new std::ofstream(filename, std::ios::binary);
+
+        if (!streamingFile_->is_open()) {
+            recording_ = false;
+            streamingMode_ = false;
+            delete streamingFile_;
+            streamingFile_ = nullptr;
+            return;
+        }
+
+        writeFileHeader();
+    } else {
+        // Memory mode - clear spike vector
+        spikes_.clear();
+    }
+
     metadata_.name = "Recording";
     metadata_.startTime = 0;
     metadata_.endTime = 0;
@@ -39,22 +80,50 @@ void RecordingManager::startRecording() {
 
 void RecordingManager::stopRecording() {
     if (!recording_) return;
-    
+
     recording_ = false;
-    updateMetadata();
+
+    if (streamingMode_ && streamingFile_) {
+        // Update header with final metadata and close file
+        updateFileHeader();
+        streamingFile_->close();
+        delete streamingFile_;
+        streamingFile_ = nullptr;
+        streamingMode_ = false;
+    } else {
+        updateMetadata();
+    }
 }
 
 void RecordingManager::recordSpike(const RecordedSpike& spike) {
     if (!recording_) return;
 
     // Set start time on first spike
-    if (spikes_.empty()) {
-        recordingStartTime_ = spike.timestamp;
-        metadata_.startTime = spike.timestamp;
-    }
+    if (streamingMode_) {
+        if (streamedSpikeCount_ == 0) {
+            recordingStartTime_ = spike.timestamp;
+            metadata_.startTime = spike.timestamp;
+        }
 
-    spikes_.push_back(spike);
-    metadata_.endTime = spike.timestamp;
+        // Write spike directly to file
+        streamingFile_->write(reinterpret_cast<const char*>(&spike.timestamp), sizeof(spike.timestamp));
+        streamingFile_->write(reinterpret_cast<const char*>(&spike.sourceNeuronId), sizeof(spike.sourceNeuronId));
+        streamingFile_->write(reinterpret_cast<const char*>(&spike.targetNeuronId), sizeof(spike.targetNeuronId));
+        streamingFile_->write(reinterpret_cast<const char*>(&spike.synapseId), sizeof(spike.synapseId));
+
+        streamedSpikeCount_++;
+        metadata_.endTime = spike.timestamp;
+        metadata_.spikeCount = streamedSpikeCount_;
+    } else {
+        // Memory mode
+        if (spikes_.empty()) {
+            recordingStartTime_ = spike.timestamp;
+            metadata_.startTime = spike.timestamp;
+        }
+
+        spikes_.push_back(spike);
+        metadata_.endTime = spike.timestamp;
+    }
 }
 
 bool RecordingManager::saveRecording(const std::string& filename) {
@@ -228,8 +297,19 @@ void RecordingManager::update(uint64_t deltaTime) {
            spikes_[playbackIndex_].timestamp <= playbackState_.currentTime) {
 
         const auto& spike = spikes_[playbackIndex_];
-        visualizer_.recordSpike(spike.sourceNeuronId, spike.targetNeuronId,
-                               spike.synapseId, spike.timestamp);
+
+        // Call visualizer if available
+        if (visualizer_) {
+            visualizer_->recordSpike(spike.sourceNeuronId, spike.targetNeuronId,
+                                   spike.synapseId, spike.timestamp);
+        }
+
+        // Call playback callback if set
+        if (playbackCallback_) {
+            playbackCallback_(spike.sourceNeuronId, spike.targetNeuronId,
+                            spike.synapseId, spike.timestamp);
+        }
+
         playbackIndex_++;
     }
     
@@ -253,6 +333,10 @@ void RecordingManager::clearRecording() {
     metadata_ = RecordingMetadata();
 }
 
+void RecordingManager::setPlaybackCallback(PlaybackSpikeCallback callback) {
+    playbackCallback_ = callback;
+}
+
 void RecordingManager::updateMetadata() {
     metadata_.spikeCount = spikes_.size();
 
@@ -274,10 +358,96 @@ void RecordingManager::updateMetadata() {
 std::string RecordingManager::getCurrentTimestamp() {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
-    
+
     std::stringstream ss;
     ss << std::put_time(std::localtime(&time_t), "%Y-%m-%dT%H:%M:%S");
     return ss.str();
+}
+
+void RecordingManager::writeFileHeader() {
+    if (!streamingFile_ || !streamingFile_->is_open()) return;
+
+    // Write magic number
+    const char magic[4] = {'S', 'N', 'N', 'R'};
+    streamingFile_->write(magic, 4);
+
+    // Write version
+    uint32_t version = 1;
+    streamingFile_->write(reinterpret_cast<const char*>(&version), sizeof(version));
+
+    // Write fixed-size metadata (512 bytes) with padding to allow in-place updates
+    std::stringstream metaStream;
+    metaStream << "{"
+               << "\"name\":\"" << metadata_.name << "\","
+               << "\"startTime\":" << metadata_.startTime << ","
+               << "\"endTime\":" << metadata_.endTime << ","
+               << "\"duration\":" << metadata_.duration << ","
+               << "\"spikeCount\":" << metadata_.spikeCount << ","
+               << "\"neuronCount\":" << metadata_.neuronCount << ","
+               << "\"timestamp\":\"" << metadata_.timestamp << "\""
+               << "}";
+
+    std::string metaStr = metaStream.str();
+
+    // Pad to fixed size (512 bytes)
+    const uint32_t FIXED_META_SIZE = 512;
+    if (metaStr.length() > FIXED_META_SIZE - 1) {
+        metaStr = metaStr.substr(0, FIXED_META_SIZE - 1);
+    }
+    metaStr.resize(FIXED_META_SIZE, ' ');  // Pad with spaces
+
+    uint32_t metaLength = FIXED_META_SIZE;
+    streamingFile_->write(reinterpret_cast<const char*>(&metaLength), sizeof(metaLength));
+    streamingFile_->write(metaStr.c_str(), metaLength);
+
+    // Write placeholder spike count (will be updated when recording stops)
+    uint64_t spikeCount = 0;
+    streamingFile_->write(reinterpret_cast<const char*>(&spikeCount), sizeof(spikeCount));
+
+    // Flush to ensure header is written
+    streamingFile_->flush();
+}
+
+void RecordingManager::updateFileHeader() {
+    if (!streamingFile_ || !streamingFile_->is_open()) return;
+
+    // Update metadata
+    metadata_.duration = metadata_.endTime - metadata_.startTime;
+    metadata_.spikeCount = streamedSpikeCount_;
+
+    // Seek to metadata content position (after magic, version, and metadata length)
+    streamingFile_->seekp(4 + sizeof(uint32_t) + sizeof(uint32_t), std::ios::beg);
+
+    // Write updated metadata (must fit in fixed size)
+    std::stringstream metaStream;
+    metaStream << "{"
+               << "\"name\":\"" << metadata_.name << "\","
+               << "\"startTime\":" << metadata_.startTime << ","
+               << "\"endTime\":" << metadata_.endTime << ","
+               << "\"duration\":" << metadata_.duration << ","
+               << "\"spikeCount\":" << metadata_.spikeCount << ","
+               << "\"neuronCount\":" << metadata_.neuronCount << ","
+               << "\"timestamp\":\"" << metadata_.timestamp << "\""
+               << "}";
+
+    std::string metaStr = metaStream.str();
+
+    // Pad to fixed size (512 bytes) - must match writeFileHeader
+    const uint32_t FIXED_META_SIZE = 512;
+    if (metaStr.length() > FIXED_META_SIZE - 1) {
+        metaStr = metaStr.substr(0, FIXED_META_SIZE - 1);
+    }
+    metaStr.resize(FIXED_META_SIZE, ' ');  // Pad with spaces
+
+    streamingFile_->write(metaStr.c_str(), FIXED_META_SIZE);
+
+    // Seek to spike count position and update it
+    // Position is: magic(4) + version(4) + metaLength(4) + metadata(512)
+    streamingFile_->seekp(4 + sizeof(uint32_t) + sizeof(uint32_t) + FIXED_META_SIZE, std::ios::beg);
+    streamingFile_->write(reinterpret_cast<const char*>(&streamedSpikeCount_), sizeof(streamedSpikeCount_));
+
+    // Flush to ensure updates are written
+    streamingFile_->flush();
 }
 
 } // namespace snnfw

@@ -1,6 +1,7 @@
 #include "snnfw/ActivityVisualizer.h"
 #include "snnfw/ActivityMonitor.h"
 #include "snnfw/NetworkDataAdapter.h"
+#include "snnfw/RecordingManager.h"  // For RecordedSpike definition
 #include <algorithm>
 #include <fstream>
 #include <spdlog/spdlog.h>

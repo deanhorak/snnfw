@@ -14,6 +14,8 @@ namespace snnfw {
 class ActivityMonitor;
 class NetworkInspector;
 class Datastore;
+class RecordingManager;
+struct SimulationConfig;
 
 /**
  * @brief Main visualization manager class
@@ -25,13 +27,20 @@ class VisualizationManager {
 public:
     /**
      * @brief Constructor
-     * 
+     *
      * @param width Window width in pixels
      * @param height Window height in pixels
      * @param title Window title
      */
     VisualizationManager(int width, int height, const std::string& title);
-    
+
+    /**
+     * @brief Constructor with configuration
+     *
+     * @param config Simulation configuration
+     */
+    explicit VisualizationManager(const SimulationConfig& config);
+
     /**
      * @brief Destructor - cleans up resources
      */
@@ -122,14 +131,42 @@ public:
     
     /**
      * @brief Set datastore
-     * 
+     *
      * @param datastore Datastore instance
      */
     void setDatastore(Datastore* datastore);
-    
+
+    /**
+     * @brief Set recording manager for playback mode
+     *
+     * @param recordingManager Recording manager instance
+     */
+    void setRecordingManager(RecordingManager* recordingManager);
+
+    /**
+     * @brief Enable playback mode
+     *
+     * @param enable true to enable playback mode
+     */
+    void enablePlaybackMode(bool enable);
+
+    /**
+     * @brief Check if in playback mode
+     *
+     * @return true if in playback mode
+     */
+    bool isPlaybackMode() const { return playbackMode_; }
+
+    /**
+     * @brief Check if visualization is enabled
+     *
+     * @return true if visualization is enabled (window and OpenGL initialized)
+     */
+    bool isVisualizationEnabled() const { return visualizationEnabled_; }
+
     /**
      * @brief Get window handle
-     * 
+     *
      * @return GLFW window pointer
      */
     GLFWwindow* getWindow() const { return window_; }
@@ -259,8 +296,11 @@ private:
     ActivityMonitor* activityMonitor_;            ///< Activity monitor
     NetworkInspector* networkInspector_;          ///< Network inspector
     Datastore* datastore_;                        ///< Datastore
-    
+    RecordingManager* recordingManager_;          ///< Recording manager for playback
+
     bool initialized_;                            ///< Initialization flag
+    bool playbackMode_;                           ///< Playback mode enabled
+    bool visualizationEnabled_;                   ///< Visualization enabled flag
 };
 
 } // namespace snnfw

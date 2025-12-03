@@ -203,7 +203,15 @@ public:
      * @return Vector of level statistics
      */
     std::vector<LevelStatistics> getLevelStatistics() const;
-    
+
+    /**
+     * @brief Export network structure to file for playback visualization
+     * @param filename Output filename (.snnw)
+     * @param networkName Name of the network
+     * @return True if successful
+     */
+    bool exportNetworkStructure(const std::string& filename, const std::string& networkName = "");
+
     /**
      * @brief Set color scheme for neuron types
      * @param excitatoryR Red component for excitatory neurons (0-1)
@@ -215,7 +223,23 @@ public:
      */
     void setColorScheme(float excitatoryR, float excitatoryG, float excitatoryB,
                        float inhibitoryR, float inhibitoryG, float inhibitoryB);
-    
+
+    /**
+     * @brief Set color for a specific layer
+     * @param layerId ID of the layer
+     * @param r Red component (0-1)
+     * @param g Green component (0-1)
+     * @param b Blue component (0-1)
+     */
+    void setLayerColor(uint64_t layerId, float r, float g, float b);
+
+    /**
+     * @brief Update layer IDs for neurons in specific clusters
+     * @param clusterIds Vector of cluster IDs
+     * @param layerId Layer ID to assign to neurons in these clusters
+     */
+    void setClusterLayerIds(const std::vector<uint64_t>& clusterIds, uint64_t layerId);
+
     /**
      * @brief Set activity color mapping
      * @param lowActivityR Red for low activity (0-1)
@@ -237,7 +261,19 @@ public:
      * @brief Clear all cached data
      */
     void clearCache();
-    
+
+    /**
+     * @brief Extract and accumulate neurons from multiple clusters
+     *
+     * This method extracts neurons from multiple clusters without clearing
+     * the cache between extractions, allowing you to build up a visualization
+     * from multiple separate clusters.
+     *
+     * @param clusterIds Vector of cluster IDs to extract
+     * @return true if extraction succeeded, false otherwise
+     */
+    bool extractMultipleClusters(const std::vector<uint64_t>& clusterIds);
+
     /**
      * @brief Get total number of neurons
      * @return Neuron count
@@ -286,21 +322,24 @@ private:
     Datastore& datastore_;
     NetworkInspector& inspector_;
     ActivityMonitor* activityMonitor_;
-    
+
     // Cached visual data
     std::vector<NeuronVisualData> neurons_;
     std::vector<SynapseVisualData> synapses_;
     std::vector<HierarchicalGroup> groups_;
-    
+
     // Lookup maps for fast access
     std::map<uint64_t, size_t> neuronIndexMap_;  // neuronId -> index in neurons_
     std::map<uint64_t, size_t> synapseIndexMap_; // synapseId -> index in synapses_
-    
+
     // Color scheme
     float excitatoryColor_[3];
     float inhibitoryColor_[3];
     float lowActivityColor_[3];
     float highActivityColor_[3];
+
+    // Layer-based color mapping
+    std::map<uint64_t, std::array<float, 3>> layerColors_;
 };
 
 } // namespace snnfw

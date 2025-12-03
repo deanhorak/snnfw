@@ -1,4 +1,5 @@
 #include "snnfw/SpikeProcessor.h"
+#include "snnfw/ActivityMonitor.h"
 #include "snnfw/Logger.h"
 #include <chrono>
 #include <algorithm>
@@ -23,7 +24,8 @@ SpikeProcessor::SpikeProcessor(size_t timeSliceCount, size_t deliveryThreads)
       stdpAPlus(0.01),
       stdpAMinus(0.012),
       stdpTauPlus(20.0),
-      stdpTauMinus(20.0) {
+      stdpTauMinus(20.0),
+      activityMonitor_(nullptr) {
 
     // Initialize event queue with empty vectors for each time slice
     eventQueue.resize(numTimeSlices);
@@ -93,8 +95,17 @@ void SpikeProcessor::stop() {
     }
     
     running.store(false);
-    
+
     SNNFW_INFO("SpikeProcessor stopped. Final time: {:.3f}ms", currentTime.load());
+}
+
+void SpikeProcessor::setActivityMonitor(ActivityMonitor* monitor) {
+    activityMonitor_ = monitor;
+    if (monitor) {
+        SNNFW_INFO("SpikeProcessor: Activity monitor attached for automatic recording");
+    } else {
+        SNNFW_INFO("SpikeProcessor: Activity monitor detached");
+    }
 }
 
 bool SpikeProcessor::scheduleSpike(const std::shared_ptr<ActionPotential>& actionPotential) {
@@ -378,6 +389,11 @@ void SpikeProcessor::deliverSliceAsync(size_t sliceIndex, double simTime) {
 
                             if (dendrite) {
                                 dendrite->receiveSpike(spike);
+
+                                // Record spike in activity monitor if attached
+                                if (activityMonitor_) {
+                                    activityMonitor_->recordSpike(spike, spike->getScheduledTime());
+                                }
                             } else {
                                 SNNFW_WARN("SpikeProcessor: Dendrite {} not found for spike delivery",
                                            spike->getDendriteId());

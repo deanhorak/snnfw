@@ -1,9 +1,12 @@
 #include "snnfw/NetworkPropagator.h"
 #include "snnfw/ActionPotential.h"
 #include "snnfw/RetrogradeActionPotential.h"
+#include "snnfw/ActivityMonitor.h"
+#include "snnfw/RecordingManager.h"
 #include "snnfw/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace snnfw {
 
@@ -12,13 +15,33 @@ NetworkPropagator::NetworkPropagator(std::shared_ptr<SpikeProcessor> spikeProces
       stdpAPlus_(0.01),
       stdpAMinus_(0.012),
       stdpTauPlus_(20.0),
-      stdpTauMinus_(20.0) {
+      stdpTauMinus_(20.0),
+      activityMonitor_(nullptr),
+      recordingManager_(nullptr) {
     if (!spikeProcessor_) {
         SNNFW_ERROR("NetworkPropagator: SpikeProcessor cannot be null");
         throw std::invalid_argument("SpikeProcessor cannot be null");
     }
     SNNFW_INFO("NetworkPropagator: Initialized with STDP parameters (A+={}, A-={}, τ+={}, τ-={})",
                stdpAPlus_, stdpAMinus_, stdpTauPlus_, stdpTauMinus_);
+}
+
+void NetworkPropagator::setActivityMonitor(ActivityMonitor* monitor) {
+    activityMonitor_ = monitor;
+    if (monitor) {
+        SNNFW_INFO("NetworkPropagator: Activity monitor attached for automatic recording");
+    } else {
+        SNNFW_INFO("NetworkPropagator: Activity monitor detached");
+    }
+}
+
+void NetworkPropagator::setRecordingManager(RecordingManager* manager) {
+    recordingManager_ = manager;
+    if (manager) {
+        SNNFW_INFO("NetworkPropagator: Recording manager attached for direct recording");
+    } else {
+        SNNFW_INFO("NetworkPropagator: Recording manager detached");
+    }
 }
 
 void NetworkPropagator::registerNeuron(const std::shared_ptr<Neuron>& neuron) {
@@ -79,6 +102,17 @@ void NetworkPropagator::registerDendrite(const std::shared_ptr<Dendrite>& dendri
 }
 
 int NetworkPropagator::fireNeuron(uint64_t neuronId, double firingTime) {
+    // Record neuron firing if recording manager is attached (before checking axons/synapses)
+    if (recordingManager_) {
+        RecordedSpike recordedSpike;
+        // Clamp negative times to 0 to avoid uint64 overflow
+        recordedSpike.timestamp = static_cast<uint64_t>(std::max(0.0, firingTime));
+        recordedSpike.sourceNeuronId = neuronId;
+        recordedSpike.targetNeuronId = 0;  // No specific target for neuron-level recording
+        recordedSpike.synapseId = 0;  // No specific synapse for neuron-level recording
+        recordingManager_->recordSpike(recordedSpike);
+    }
+
     // Get the neuron
     std::shared_ptr<Neuron> neuron;
     {
@@ -165,6 +199,11 @@ int NetworkPropagator::fireNeuron(uint64_t neuronId, double firingTime) {
                 spikesScheduled++;
                 SNNFW_TRACE("NetworkPropagator: Scheduled spike from neuron {} via synapse {} to dendrite {} at time {:.3f}ms (offset: {:.3f}ms, dispatch: {:.3f}ms)",
                            neuronId, synapseId, synapse->getDendriteId(), arrivalTime, timeOffset, firingTime);
+
+                // Record spike in activity monitor if attached
+                if (activityMonitor_) {
+                    activityMonitor_->recordSpike(actionPotential, arrivalTime);
+                }
             } else {
                 SNNFW_WARN("NetworkPropagator: Failed to schedule spike from neuron {} via synapse {}",
                           neuronId, synapseId);

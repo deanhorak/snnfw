@@ -137,6 +137,12 @@ public:
     double getTimeStep() const { return timeStep; }
 
     /**
+     * @brief Set activity monitor for automatic spike recording
+     * @param monitor Pointer to activity monitor (nullptr to disable)
+     */
+    void setActivityMonitor(class ActivityMonitor* monitor);
+
+    /**
      * @brief Get the number of pending spikes across all time slices
      * @return Total number of scheduled spikes
      */
@@ -268,6 +274,9 @@ private:
     double stdpAMinus;               ///< LTD amplitude (default: 0.012)
     double stdpTauPlus;              ///< LTP time constant in ms (default: 20.0)
     double stdpTauMinus;             ///< LTD time constant in ms (default: 20.0)
+
+    // Activity monitoring (optional)
+    class ActivityMonitor* activityMonitor_;  ///< Optional activity monitor for recording
 };
 
 } // namespace snnfw

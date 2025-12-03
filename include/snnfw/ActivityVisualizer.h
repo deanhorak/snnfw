@@ -57,15 +57,8 @@ struct ActivityConfig {
     uint32_t maxParticles = 10000;         // Maximum active particles
 };
 
-/**
- * @brief Recorded spike event for playback
- */
-struct RecordedSpike {
-    uint64_t timestamp;
-    uint64_t sourceNeuronId;
-    uint64_t targetNeuronId;
-    uint64_t synapseId;
-};
+// Forward declaration - defined in RecordingManager.h
+struct RecordedSpike;
 
 /**
  * @brief Activity recording for playback

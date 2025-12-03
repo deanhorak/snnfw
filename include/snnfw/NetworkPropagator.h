@@ -199,6 +199,18 @@ public:
      */
     void applyRewardModulatedSTDP(uint64_t neuronId, double rewardFactor);
 
+    /**
+     * @brief Set activity monitor for automatic spike recording
+     * @param monitor Pointer to activity monitor (nullptr to disable)
+     */
+    void setActivityMonitor(class ActivityMonitor* monitor);
+
+    /**
+     * @brief Set recording manager for direct spike recording (bypasses ActivityMonitor)
+     * @param manager Pointer to recording manager (nullptr to disable)
+     */
+    void setRecordingManager(class RecordingManager* manager);
+
 private:
     // Spike processor for temporal delivery
     std::shared_ptr<SpikeProcessor> spikeProcessor_;
@@ -224,6 +236,10 @@ private:
     double stdpAMinus_;     ///< LTD amplitude (default: 0.012)
     double stdpTauPlus_;    ///< LTP time constant in ms (default: 20.0)
     double stdpTauMinus_;   ///< LTD time constant in ms (default: 20.0)
+
+    // Activity monitoring (optional)
+    class ActivityMonitor* activityMonitor_;  ///< Optional activity monitor for recording
+    class RecordingManager* recordingManager_;  ///< Optional recording manager for direct recording
 };
 
 } // namespace snnfw

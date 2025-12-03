@@ -49,6 +49,7 @@
 #include "snnfw/SpikeProcessor.h"
 #include "snnfw/ConfigLoader.h"
 #include "snnfw/EMNISTLoader.h"
+#include "snnfw/RecordingManager.h"
 
 using namespace snnfw;
 
@@ -645,29 +646,50 @@ struct CorticalColumn {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <config_file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <config_file> [--record <output_file.snnr>]" << std::endl;
         return 1;
     }
-    
+
+    // Parse command-line arguments
     try {
         // Load configuration
         std::cout << "=== MNIST Multi-Column V1 Architecture ===" << std::endl;
         std::cout << "Loading configuration from: " << argv[1] << std::endl;
         ConfigLoader configLoader(argv[1]);
         MultiColumnConfig config = MultiColumnConfig::fromConfigLoader(configLoader);
-        
+
+        // Load recording configuration from JSON
+        bool enableRecording = configLoader.get<bool>("/recording/enabled", false);
+        std::string recordingFilename = configLoader.get<std::string>("/recording/filename", "emnist_training.snnr");
+        bool autoSaveRecording = configLoader.get<bool>("/recording/auto_save", true);
+
         std::cout << "\nConfiguration:" << std::endl;
         std::cout << "  Neuron window: " << config.neuronWindow << " ms" << std::endl;
         std::cout << "  Similarity threshold: " << config.neuronThreshold << std::endl;
         std::cout << "  Max patterns per neuron: " << config.neuronMaxPatterns << std::endl;
         std::cout << "  Training examples per letter: " << config.trainingExamplesPerLetter << std::endl;
         std::cout << "  Test images: " << config.testImages << std::endl;
+        if (enableRecording) {
+            std::cout << "  Recording enabled: " << recordingFilename << std::endl;
+        }
 
         // Extract neuron parameters for convenience
         double neuronWindow = config.neuronWindow;
         double neuronThreshold = config.neuronThreshold;
         int neuronMaxPatterns = config.neuronMaxPatterns;
-        
+
+        // Initialize RecordingManager if recording is enabled
+        std::unique_ptr<RecordingManager> recordingManager;
+
+        if (enableRecording) {
+            std::cout << "\n=== Initializing Recording System ===" << std::endl;
+            recordingManager = std::make_unique<RecordingManager>();
+            // Start recording in streaming mode to write spikes directly to disk
+            recordingManager->startRecording(true, recordingFilename);
+            std::cout << "✓ Recording system initialized (streaming mode)" << std::endl;
+            std::cout << "  Output file: " << recordingFilename << std::endl;
+        }
+
         // Create hierarchical structure
         std::cout << "\n=== Building Hierarchical Structure ===" << std::endl;
         NeuralObjectFactory factory;
@@ -1611,6 +1633,11 @@ int main(int argc, char* argv[]) {
         auto spikeProcessor = std::make_shared<SpikeProcessor>(10000, config.numThreads);
         auto networkPropagator = std::make_shared<NetworkPropagator>(spikeProcessor);
 
+        // Attach recording manager to network propagator if recording is enabled
+        if (recordingManager) {
+            networkPropagator->setRecordingManager(recordingManager.get());
+        }
+
         // Register all neurons
         std::vector<std::shared_ptr<Neuron>> allNeurons;
         for (auto& col : corticalColumns) {
@@ -2493,8 +2520,16 @@ int main(int argc, char* argv[]) {
                       << std::endl;
         }
 
+        // Stop recording if enabled (streaming mode writes directly to disk)
+        if (recordingManager) {
+            std::cout << "\n=== Finalizing Recording ===" << std::endl;
+            recordingManager->stopRecording();
+            std::cout << "✓ Recording finalized: " << recordingFilename << std::endl;
+            std::cout << "  Total spikes recorded: " << recordingManager->getMetadata().spikeCount << std::endl;
+        }
+
         return 0;
-        
+
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;

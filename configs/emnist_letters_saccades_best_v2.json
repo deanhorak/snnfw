@@ -9,6 +9,11 @@
     "time_slice_ms": 1.0,
     "real_time_sync": false
   },
+  "recording": {
+    "enabled": true,
+    "filename": "emnist_training.snnr",
+    "auto_save": true
+  },
   "training": {
     "examples_per_letter": 800,
     "test_images": 20800

@@ -9,6 +9,9 @@
 #include "snnfw/Axon.h"
 #include "snnfw/Dendrite.h"
 #include "snnfw/Logger.h"
+#include "snnfw/SimulationConfig.h"
+#include "snnfw/RecordingManager.h"
+#include "snnfw/ActivityVisualizer.h"
 #include <algorithm>
 
 namespace snnfw {
@@ -18,7 +21,28 @@ ActivityMonitor::ActivityMonitor(Datastore& datastore)
       monitoring_(false),
       historyDuration_(1000.0),  // Default: 1 second
       snapshotInterval_(10.0),   // Default: 10ms
-      nextCallbackId_(1) {
+      nextCallbackId_(1),
+      recordingManager_(nullptr) {
+    SNNFW_INFO("ActivityMonitor created with {}ms history duration", historyDuration_);
+}
+
+ActivityMonitor::ActivityMonitor(Datastore& datastore, const SimulationConfig& config)
+    : datastore_(datastore),
+      monitoring_(false),
+      historyDuration_(1000.0),
+      snapshotInterval_(10.0),
+      nextCallbackId_(1),
+      recordingManager_(nullptr) {
+
+    // Create recording manager if recording is enabled
+    if (config.enableRecording) {
+        // Note: RecordingManager requires an ActivityVisualizer, which we don't have here
+        // We'll need to refactor RecordingManager to work without ActivityVisualizer
+        // For now, recording will be set up externally
+        SNNFW_INFO("ActivityMonitor created with recording enabled (filename: {})",
+                   config.recordingFilename.empty() ? "auto-generated" : config.recordingFilename);
+    }
+
     SNNFW_INFO("ActivityMonitor created with {}ms history duration", historyDuration_);
 }
 
@@ -390,7 +414,7 @@ void ActivityMonitor::cleanupOldEvents(double currentTime) {
 
 void ActivityMonitor::notifyCallbacks(const SpikeEvent& event) {
     std::lock_guard<std::mutex> lock(callbacksMutex_);
-    
+
     for (const auto& pair : callbacks_) {
         try {
             pair.second(event);
@@ -398,6 +422,51 @@ void ActivityMonitor::notifyCallbacks(const SpikeEvent& event) {
             SNNFW_ERROR("ActivityMonitor: Callback {} threw exception: {}", pair.first, e.what());
         }
     }
+
+    // If recording manager is attached, record the spike
+    if (recordingManager_) {
+        RecordedSpike recordedSpike;
+        recordedSpike.timestamp = static_cast<uint64_t>(event.timestamp);
+        recordedSpike.sourceNeuronId = event.sourceNeuronId;
+        recordedSpike.targetNeuronId = event.targetNeuronId;
+        recordedSpike.synapseId = event.synapseId;
+        recordingManager_->recordSpike(recordedSpike);
+    }
+}
+
+void ActivityMonitor::setRecordingManager(RecordingManager* recordingManager, bool streamToFile, const std::string& filename) {
+    recordingManager_ = recordingManager;
+
+    if (recordingManager_) {
+        SNNFW_INFO("ActivityMonitor: Recording manager attached");
+        if (streamToFile) {
+            SNNFW_INFO("ActivityMonitor: Streaming mode enabled - writing to: " + filename);
+            recordingManager_->startRecording(true, filename);
+        } else {
+            SNNFW_INFO("ActivityMonitor: Memory mode enabled");
+            recordingManager_->startRecording(false);
+        }
+    } else {
+        SNNFW_INFO("ActivityMonitor: Recording manager detached");
+    }
+}
+
+bool ActivityMonitor::saveRecording(const std::string& filename) {
+    if (!recordingManager_) {
+        SNNFW_WARN("ActivityMonitor: No recording manager attached");
+        return false;
+    }
+
+    recordingManager_->stopRecording();
+    bool success = recordingManager_->saveRecording(filename);
+
+    if (success) {
+        SNNFW_INFO("ActivityMonitor: Recording saved to {}", filename);
+    } else {
+        SNNFW_ERROR("ActivityMonitor: Failed to save recording to {}", filename);
+    }
+
+    return success;
 }
 
 } // namespace snnfw

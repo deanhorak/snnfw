@@ -236,10 +236,12 @@ if(EXISTS ${GLFW_DIR} AND EXISTS ${GLAD_DIR} AND EXISTS ${IMGUI_DIR})
         src/ActivityVisualizer.cpp
         src/SpikeRenderer.cpp
         src/RecordingManager.cpp
+        src/PlaybackControls.cpp
         src/RasterPlotRenderer.cpp
         src/InteractionManager.cpp
         src/PatternDetector.cpp
         src/ActivityHistogram.cpp
+        src/NetworkStructureExporter.cpp
     )
     set(VISUALIZATION_ENABLED TRUE)
     message(STATUS "Visualization support ENABLED")
@@ -475,6 +477,18 @@ target_link_libraries(emnist_letters_v1 CURL::libcurl)
 
 add_executable(emnist_letters_optimize experiments/emnist_letters_optimize.cpp)
 target_link_libraries(emnist_letters_optimize ${PROJECT_NAME})
+
+add_executable(emnist_letters_visualized experiments/emnist_letters_visualized.cpp)
+target_link_libraries(emnist_letters_visualized ${PROJECT_NAME})
+
+add_executable(emnist_letters_training experiments/emnist_letters_training.cpp)
+target_link_libraries(emnist_letters_training ${PROJECT_NAME})
+
+add_executable(playback_viewer experiments/playback_viewer.cpp)
+target_link_libraries(playback_viewer ${PROJECT_NAME})
+
+add_executable(simple_playback_viewer experiments/simple_playback_viewer.cpp)
+target_link_libraries(simple_playback_viewer ${PROJECT_NAME})
 
 # Analysis tools
 add_executable(analyze_network_stats tools/analyze_network_stats.cpp)

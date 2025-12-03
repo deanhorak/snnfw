@@ -12,9 +12,13 @@
 #include "snnfw/Lobe.h"
 #include "snnfw/Hemisphere.h"
 #include "snnfw/Brain.h"
+#include "snnfw/NetworkStructureExporter.h"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 namespace snnfw {
 
@@ -45,25 +49,79 @@ NetworkDataAdapter::NetworkDataAdapter(Datastore& datastore,
     highActivityColor_[2] = 0.2f;
 }
 
+void NetworkDataAdapter::setLayerColor(uint64_t layerId, float r, float g, float b) {
+    layerColors_[layerId] = {r, g, b};
+}
+
+void NetworkDataAdapter::setClusterLayerIds(const std::vector<uint64_t>& clusterIds, uint64_t layerId) {
+    // Update layerId for all neurons in the specified clusters
+    for (auto& neuron : neurons_) {
+        if (std::find(clusterIds.begin(), clusterIds.end(), neuron.clusterId) != clusterIds.end()) {
+            neuron.layerId = layerId;
+            // Reapply color with new layer ID
+            applyNeuronColor(neuron);
+        }
+    }
+}
+
 bool NetworkDataAdapter::extractNetwork(uint64_t brainId) {
     clearCache();
-    
+
     // Extract from brain level
     return extractHierarchy(brainId, "Brain");
 }
 
 bool NetworkDataAdapter::extractHierarchy(uint64_t rootId, const std::string& typeName) {
     clearCache();
-    
+
     // Extract neurons from this hierarchy
     extractNeurons(rootId, typeName);
-    
+
     // Extract synapses connecting these neurons
     extractSynapses();
-    
+
     // Build hierarchical groups
     buildHierarchicalGroups(rootId, typeName);
-    
+
+    return neurons_.size() > 0;
+}
+
+bool NetworkDataAdapter::extractMultipleClusters(const std::vector<uint64_t>& clusterIds) {
+    clearCache();
+
+    // Extract neurons from each cluster
+    for (uint64_t clusterId : clusterIds) {
+        auto cluster = datastore_.getCluster(clusterId);
+        if (!cluster) {
+            std::cerr << "Cluster " << clusterId << " not found!" << std::endl;
+            continue;
+        }
+
+        auto neuronIds = cluster->getNeuronIds();
+        for (uint64_t neuronId : neuronIds) {
+            auto neuron = datastore_.getNeuron(neuronId);
+            if (!neuron) continue;
+
+            NeuronVisualData visualData;
+            visualData.id = neuronId;
+            visualData.radius = 0.5f;
+            visualData.activity = 0.0f;
+            visualData.isExcitatory = true;  // Assume excitatory for now
+            visualData.position = neuron->getPosition();
+            visualData.clusterId = clusterId;
+            visualData.layerId = 0;  // Will be set by caller if needed
+
+            // Apply color based on layer
+            applyNeuronColor(visualData);
+
+            neurons_.push_back(visualData);
+            neuronIndexMap_[neuronId] = neurons_.size() - 1;
+        }
+    }
+
+    // Extract synapses connecting these neurons
+    extractSynapses();
+
     return neurons_.size() > 0;
 }
 
@@ -86,7 +144,9 @@ void NetworkDataAdapter::extractNeurons(uint64_t rootId, const std::string& type
         } else {
             // Recurse to children
             auto childStats = inspector_.inspectHierarchy(id, type, datastore_);
-            for (uint64_t childId : childStats.childIds) {
+            // Make a copy of childIds before iterating, since recursive calls may modify it
+            auto childIds = childStats.childIds;
+            for (uint64_t childId : childIds) {
                 std::string childType = getChildType(type);
                 collectNeurons(childId, childType);
             }
@@ -300,12 +360,25 @@ void NetworkDataAdapter::updateSynapseActivity(SynapseVisualData& synapse, doubl
 }
 
 void NetworkDataAdapter::applyNeuronColor(NeuronVisualData& neuron) {
-    // Base color from neuron type
-    const float* baseColor = neuron.isExcitatory ? excitatoryColor_ : inhibitoryColor_;
-    
+    // Check if this neuron's layer has a custom color
+    float baseColor[3];
+    auto layerColorIt = layerColors_.find(neuron.layerId);
+    if (layerColorIt != layerColors_.end()) {
+        // Use layer-specific color
+        baseColor[0] = layerColorIt->second[0];
+        baseColor[1] = layerColorIt->second[1];
+        baseColor[2] = layerColorIt->second[2];
+    } else {
+        // Use default color based on neuron type
+        const float* defaultColor = neuron.isExcitatory ? excitatoryColor_ : inhibitoryColor_;
+        baseColor[0] = defaultColor[0];
+        baseColor[1] = defaultColor[1];
+        baseColor[2] = defaultColor[2];
+    }
+
     // Mix with activity color
     float activityMix = neuron.activity;
-    
+
     neuron.r = baseColor[0] * (1.0f - activityMix) + highActivityColor_[0] * activityMix;
     neuron.g = baseColor[1] * (1.0f - activityMix) + highActivityColor_[1] * activityMix;
     neuron.b = baseColor[2] * (1.0f - activityMix) + highActivityColor_[2] * activityMix;
@@ -313,25 +386,25 @@ void NetworkDataAdapter::applyNeuronColor(NeuronVisualData& neuron) {
 }
 
 void NetworkDataAdapter::applySynapseColor(SynapseVisualData& synapse) {
-    // Color based on weight (positive = green, negative = red)
+    // Color based on weight (positive = bright cyan, negative = red)
     if (synapse.weight > 0) {
-        synapse.r = 0.2f;
-        synapse.g = 0.8f;
-        synapse.b = 0.2f;
+        synapse.r = 0.0f;
+        synapse.g = 1.0f;
+        synapse.b = 1.0f;  // Bright cyan for excitatory
     } else {
-        synapse.r = 0.8f;
-        synapse.g = 0.2f;
-        synapse.b = 0.2f;
+        synapse.r = 1.0f;
+        synapse.g = 0.0f;
+        synapse.b = 0.0f;  // Bright red for inhibitory
     }
-    
+
     // Mix with activity
     float activityMix = synapse.activity;
     synapse.r = synapse.r * (1.0f - activityMix) + 1.0f * activityMix;
     synapse.g = synapse.g * (1.0f - activityMix) + 1.0f * activityMix;
     synapse.b = synapse.b * (1.0f - activityMix) + 0.2f * activityMix;
-    
-    // Alpha based on weight magnitude
-    synapse.a = 0.3f + std::min(0.7f, std::abs(synapse.weight) * 0.5f);
+
+    // Higher alpha for better visibility
+    synapse.a = 0.6f + std::min(0.4f, std::abs(synapse.weight) * 0.3f);
 }
 
 std::vector<NeuronVisualData> NetworkDataAdapter::getNeuronsByLevel(
@@ -448,6 +521,80 @@ std::string NetworkDataAdapter::getChildType(const std::string& parentType) cons
     if (parentType == "Column") return "Layer";
     if (parentType == "Layer") return "Cluster";
     return "";
+}
+
+bool NetworkDataAdapter::exportNetworkStructure(const std::string& filename, const std::string& networkName) {
+    NetworkStructureExporter exporter;
+
+    // Set metadata
+    NetworkStructureMetadata metadata;
+    metadata.name = networkName.empty() ? "SNNFW Network" : networkName;
+
+    // Generate ISO 8601 timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::gmtime(&time_t_now), "%Y-%m-%dT%H:%M:%SZ");
+    metadata.timestamp = ss.str();
+
+    metadata.neuronCount = neurons_.size();
+    metadata.synapseCount = synapses_.size();
+    metadata.layerCount = layerColors_.size();
+
+    exporter.setMetadata(metadata);
+
+    // Export neurons
+    for (const auto& neuron : neurons_) {
+        ExportedNeuron exportedNeuron;
+        exportedNeuron.id = neuron.id;
+        exportedNeuron.position = neuron.position;
+        exportedNeuron.radius = neuron.radius;
+        exportedNeuron.r = neuron.r;
+        exportedNeuron.g = neuron.g;
+        exportedNeuron.b = neuron.b;
+        exportedNeuron.a = neuron.a;
+        exportedNeuron.isExcitatory = neuron.isExcitatory;
+        exportedNeuron.clusterId = neuron.clusterId;
+        exportedNeuron.layerId = neuron.layerId;
+        exportedNeuron.columnId = neuron.columnId;
+        exportedNeuron.nucleusId = neuron.nucleusId;
+        exportedNeuron.regionId = neuron.regionId;
+        exportedNeuron.lobeId = neuron.lobeId;
+        exportedNeuron.hemisphereId = neuron.hemisphereId;
+        exportedNeuron.brainId = neuron.brainId;
+
+        exporter.addNeuron(exportedNeuron);
+    }
+
+    // Export synapses
+    for (const auto& synapse : synapses_) {
+        ExportedSynapse exportedSynapse;
+        exportedSynapse.id = synapse.id;
+        exportedSynapse.sourceNeuronId = synapse.sourceNeuronId;
+        exportedSynapse.targetNeuronId = synapse.targetNeuronId;
+        exportedSynapse.weight = synapse.weight;
+        exportedSynapse.thickness = synapse.thickness;
+        exportedSynapse.r = synapse.r;
+        exportedSynapse.g = synapse.g;
+        exportedSynapse.b = synapse.b;
+        exportedSynapse.a = synapse.a;
+
+        exporter.addSynapse(exportedSynapse);
+    }
+
+    // Export layers
+    for (const auto& layerColor : layerColors_) {
+        ExportedLayer exportedLayer;
+        exportedLayer.id = layerColor.first;
+        exportedLayer.name = "Layer_" + std::to_string(layerColor.first);
+        exportedLayer.r = layerColor.second[0];
+        exportedLayer.g = layerColor.second[1];
+        exportedLayer.b = layerColor.second[2];
+
+        exporter.addLayer(exportedLayer);
+    }
+
+    return exporter.save(filename);
 }
 
 } // namespace snnfw

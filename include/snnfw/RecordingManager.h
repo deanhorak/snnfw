@@ -1,12 +1,33 @@
 #ifndef SNNFW_RECORDING_MANAGER_H
 #define SNNFW_RECORDING_MANAGER_H
 
-#include "snnfw/ActivityVisualizer.h"
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 namespace snnfw {
+
+// Forward declarations
+class ActivityVisualizer;
+
+/**
+ * @brief Recorded spike event
+ */
+struct RecordedSpike {
+    uint64_t timestamp;
+    uint64_t sourceNeuronId;
+    uint64_t targetNeuronId;
+    uint64_t synapseId;
+};
+
+/**
+ * @brief Callback function type for playback spike events
+ *
+ * Called for each spike during playback.
+ * Parameters: sourceNeuronId, targetNeuronId, synapseId, timestamp
+ */
+using PlaybackSpikeCallback = std::function<void(uint64_t, uint64_t, uint64_t, uint64_t)>;
 
 /**
  * @brief Metadata for a spike recording
@@ -71,11 +92,16 @@ struct PlaybackState {
 class RecordingManager {
 public:
     /**
-     * @brief Constructor
+     * @brief Constructor with visualizer (for backward compatibility)
      * @param visualizer Activity visualizer to record from
      */
     explicit RecordingManager(ActivityVisualizer& visualizer);
-    
+
+    /**
+     * @brief Constructor without visualizer (for recording-only mode)
+     */
+    RecordingManager();
+
     /**
      * @brief Destructor
      */
@@ -85,9 +111,11 @@ public:
     
     /**
      * @brief Start recording spike activity
+     * @param streamToFile If true, stream spikes directly to file instead of memory
+     * @param filename Filename for streaming (required if streamToFile is true)
      */
-    void startRecording();
-    
+    void startRecording(bool streamToFile = false, const std::string& filename = "");
+
     /**
      * @brief Stop recording
      */
@@ -186,23 +214,40 @@ public:
      * @brief Clear current recording
      */
     void clearRecording();
-    
+
+    /**
+     * @brief Set playback callback for spike events
+     * @param callback Function to call for each spike during playback
+     */
+    void setPlaybackCallback(PlaybackSpikeCallback callback);
+
 private:
-    ActivityVisualizer& visualizer_;
+    ActivityVisualizer* visualizer_;  // Optional - nullptr if not using visualizer
 
     // Recording state
     bool recording_;
     uint64_t recordingStartTime_;
     std::vector<RecordedSpike> spikes_;
     RecordingMetadata metadata_;
-    
+
+    // Streaming state
+    bool streamingMode_;
+    std::string streamingFilename_;
+    std::ofstream* streamingFile_;
+    uint64_t streamedSpikeCount_;
+
     // Playback state
     PlaybackState playbackState_;
     size_t playbackIndex_;  // Current index in recording
-    
+
+    // Playback callback
+    PlaybackSpikeCallback playbackCallback_;
+
     // Helper methods
     void updateMetadata();
     std::string getCurrentTimestamp();
+    void writeFileHeader();
+    void updateFileHeader();
 };
 
 } // namespace snnfw

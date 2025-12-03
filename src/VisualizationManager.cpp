@@ -1,9 +1,13 @@
 #include "snnfw/VisualizationManager.h"
+#include "snnfw/SimulationConfig.h"
+#include "snnfw/RecordingManager.h"
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <iostream>
 #include <stdexcept>
+#include <chrono>
+#include <thread>
 
 namespace snnfw {
 
@@ -25,7 +29,10 @@ VisualizationManager::VisualizationManager(int width, int height, const std::str
     , activityMonitor_(nullptr)
     , networkInspector_(nullptr)
     , datastore_(nullptr)
+    , recordingManager_(nullptr)
     , initialized_(false)
+    , playbackMode_(false)
+    , visualizationEnabled_(true)  // Default constructor always enables visualization
 {
     initGLFW();
     initGLAD();
@@ -33,25 +40,80 @@ VisualizationManager::VisualizationManager(int width, int height, const std::str
     initialized_ = true;
 }
 
+VisualizationManager::VisualizationManager(const SimulationConfig& config)
+    : window_(nullptr)
+    , width_(config.visualizationWidth)
+    , height_(config.visualizationHeight)
+    , title_(config.visualizationTitle)
+    , vsync_(true)
+    , targetFPS_(60)
+    , backgroundColor_(0.1f, 0.1f, 0.15f)
+    , lastFrameTime_(0.0)
+    , deltaTime_(0.0)
+    , fps_(0.0)
+    , frameCount_(0)
+    , fpsUpdateTime_(0.0)
+    , renderCallback_(nullptr)
+    , updateCallback_(nullptr)
+    , activityMonitor_(nullptr)
+    , networkInspector_(nullptr)
+    , datastore_(nullptr)
+    , recordingManager_(nullptr)
+    , initialized_(false)
+    , playbackMode_(config.playbackMode)
+    , visualizationEnabled_(config.enableVisualization || config.playbackMode)
+{
+    // Only initialize OpenGL/GLFW if visualization is enabled
+    if (visualizationEnabled_) {
+        initGLFW();
+        initGLAD();
+        initImGui();
+        initialized_ = true;
+    }
+}
+
 VisualizationManager::~VisualizationManager() {
     cleanup();
 }
 
 void VisualizationManager::run() {
+    if (!visualizationEnabled_) {
+        // When visualization is disabled, still run update callback if set
+        // This allows training/testing logic to run without visualization
+        if (updateCallback_) {
+            std::cout << "Running in headless mode (no visualization)..." << std::endl;
+            // Simple loop - just call update callback repeatedly
+            // The callback should handle its own termination logic
+            double lastTime = 0.0;
+            while (true) {
+                double currentTime = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count()) / 1000.0;
+                double deltaTime = currentTime - lastTime;
+                lastTime = currentTime;
+
+                updateCallback_(deltaTime);
+
+                // Small sleep to prevent busy-waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        return;
+    }
+
     if (!initialized_) {
         std::cerr << "ERROR: VisualizationManager not initialized" << std::endl;
         return;
     }
-    
+
     lastFrameTime_ = glfwGetTime();
     fpsUpdateTime_ = lastFrameTime_;
-    
+
     while (!shouldClose()) {
         // Calculate delta time
         double currentTime = glfwGetTime();
         deltaTime_ = currentTime - lastFrameTime_;
         lastFrameTime_ = currentTime;
-        
+
         // Update FPS counter
         frameCount_++;
         if (currentTime - fpsUpdateTime_ >= 1.0) {
@@ -59,20 +121,20 @@ void VisualizationManager::run() {
             frameCount_ = 0;
             fpsUpdateTime_ = currentTime;
         }
-        
+
         // Process input
         processInput();
-        
+
         // Update logic
         update(deltaTime_);
-        
+
         // Render
         render();
-        
+
         // Swap buffers and poll events
         glfwSwapBuffers(window_);
         glfwPollEvents();
-        
+
         // Frame rate limiting (if not using VSync)
         if (!vsync_ && targetFPS_ > 0) {
             double targetFrameTime = 1.0 / targetFPS_;
@@ -89,10 +151,12 @@ void VisualizationManager::run() {
 }
 
 void VisualizationManager::close() {
+    if (!visualizationEnabled_ || !window_) return;
     glfwSetWindowShouldClose(window_, GLFW_TRUE);
 }
 
 bool VisualizationManager::shouldClose() const {
+    if (!visualizationEnabled_ || !window_) return true;  // Always "closed" if no visualization
     return glfwWindowShouldClose(window_);
 }
 
@@ -102,7 +166,9 @@ void VisualizationManager::setTargetFPS(int fps) {
 
 void VisualizationManager::enableVSync(bool enable) {
     vsync_ = enable;
-    glfwSwapInterval(enable ? 1 : 0);
+    if (visualizationEnabled_ && window_) {
+        glfwSwapInterval(enable ? 1 : 0);
+    }
 }
 
 void VisualizationManager::setBackgroundColor(float r, float g, float b) {
@@ -131,6 +197,14 @@ void VisualizationManager::setNetworkInspector(NetworkInspector* inspector) {
 
 void VisualizationManager::setDatastore(Datastore* datastore) {
     datastore_ = datastore;
+}
+
+void VisualizationManager::setRecordingManager(RecordingManager* recordingManager) {
+    recordingManager_ = recordingManager;
+}
+
+void VisualizationManager::enablePlaybackMode(bool enable) {
+    playbackMode_ = enable;
 }
 
 void VisualizationManager::initGLFW() {

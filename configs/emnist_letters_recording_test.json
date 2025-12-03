@@ -1,0 +1,114 @@
+{
+  "data": {
+    "train_images": "/home/dean/repos/snnfw/data/EMNIST/emnist-letters-train-images-idx3-ubyte",
+    "train_labels": "/home/dean/repos/snnfw/data/EMNIST/emnist-letters-train-labels-idx1-ubyte",
+    "test_images": "/home/dean/repos/snnfw/data/EMNIST/emnist-letters-test-images-idx3-ubyte",
+    "test_labels": "/home/dean/repos/snnfw/data/EMNIST/emnist-letters-test-labels-idx1-ubyte"
+  },
+
+  "neuron": {
+    "window_size_ms": 500,
+    "similarity_threshold": 0.93,
+    "max_patterns": 500
+  },
+
+  "spike_processor": {
+    "num_threads": 24,
+    "time_slice_ms": 1.0,
+    "real_time_sync": false
+  },
+
+  "recording": {
+    "enabled": true,
+    "filename": "emnist_recording_test.snnr",
+    "auto_save": true
+  },
+
+  "training": {
+    "examples_per_letter": 10,
+    "test_images": 260
+  },
+
+  "saccades": {
+    "enabled": true,
+    "num_fixations": 4,
+    "fixation_duration_ms": 100,
+    "fixations": [
+      {"name": "top", "offset_x": 0, "offset_y": -7},
+      {"name": "bottom", "offset_x": 0, "offset_y": 7},
+      {"name": "center", "offset_x": 0, "offset_y": 0},
+      {"name": "full", "offset_x": 0, "offset_y": 0}
+    ]
+  },
+
+  "position_encoding": {
+    "enabled": true,
+    "num_position_neurons": 16,
+    "grid_size": 4,
+    "firing_duration_ms": 10
+  },
+
+  "columns": {
+    "orientation": {
+      "enabled": true,
+      "num_orientations": 8,
+      "num_frequencies": 2,
+      "frequencies": [
+        {"name": "low", "wavelength": 8.0},
+        {"name": "high", "wavelength": 3.0}
+      ]
+    },
+    "center_surround": {
+      "enabled": true,
+      "num_scales": 3,
+      "scales": [
+        {"name": "small", "sigma_center": 1.2, "sigma_surround": 3.5},
+        {"name": "medium", "sigma_center": 2.0, "sigma_surround": 5.0},
+        {"name": "large", "sigma_center": 3.0, "sigma_surround": 7.0}
+      ]
+    },
+    "blob_detector": {
+      "enabled": false,
+      "num_scales": 0
+    }
+  },
+
+  "specialized_detectors": {
+    "top_loop": {
+      "enabled": true,
+      "count": 2,
+      "target_letters": ["P", "R", "B", "D"]
+    },
+    "gap_detector": {
+      "enabled": true,
+      "count": 2,
+      "target_letters": ["E", "F", "H", "I"]
+    }
+  },
+
+  "layer_sizes": {
+    "layer1": 32,
+    "layer23": 448,
+    "layer4_grid": 7,
+    "layer5": 80,
+    "layer6": 32,
+    "neurons_per_output_class": 15
+  },
+
+  "connectivity": {
+    "lateral": {
+      "enabled": true,
+      "connectivity_prob": 0.25,
+      "neighbor_range": 2,
+      "weight": 0.5,
+      "delay_ms": 1.0
+    },
+    "recurrent": {
+      "enabled": true,
+      "connectivity_prob": 0.25,
+      "weight": 0.3,
+      "delay_ms": 2.0
+    }
+  }
+}
+

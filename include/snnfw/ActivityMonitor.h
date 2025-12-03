@@ -16,6 +16,8 @@ namespace snnfw {
 class Datastore;
 class ActionPotential;
 class Neuron;
+class RecordingManager;
+struct SimulationConfig;
 
 /**
  * @brief Represents a spike event for monitoring and visualization
@@ -174,7 +176,14 @@ public:
      * @param datastore Reference to the datastore for resolving hierarchical context
      */
     explicit ActivityMonitor(Datastore& datastore);
-    
+
+    /**
+     * @brief Constructor with configuration
+     * @param datastore Reference to the datastore for resolving hierarchical context
+     * @param config Simulation configuration (enables recording if configured)
+     */
+    ActivityMonitor(Datastore& datastore, const SimulationConfig& config);
+
     /**
      * @brief Destructor
      */
@@ -300,6 +309,27 @@ public:
      */
     double getCurrentSpikeRate(double windowMs = 100.0) const;
 
+    /**
+     * @brief Set recording manager for automatic spike recording
+     * @param recordingManager Pointer to recording manager (nullptr to disable)
+     * @param streamToFile If true, stream spikes directly to file instead of memory
+     * @param filename Filename for streaming (required if streamToFile is true)
+     */
+    void setRecordingManager(RecordingManager* recordingManager, bool streamToFile = false, const std::string& filename = "");
+
+    /**
+     * @brief Get the recording manager
+     * @return Pointer to recording manager (nullptr if not set)
+     */
+    RecordingManager* getRecordingManager() const { return recordingManager_; }
+
+    /**
+     * @brief Save current recording to file
+     * @param filename Output filename
+     * @return true if successful
+     */
+    bool saveRecording(const std::string& filename);
+
 private:
     /**
      * @brief Resolve hierarchical context for a neuron
@@ -342,16 +372,18 @@ private:
     bool monitoring_;                               ///< Whether monitoring is active
     double historyDuration_;                        ///< Duration of history to keep (ms)
     double snapshotInterval_;                       ///< Interval for snapshots (ms)
-    
+
     mutable std::mutex eventsMutex_;                ///< Protects spike events
     std::deque<SpikeEvent> spikeEvents_;            ///< Recorded spike events
-    
+
     mutable std::mutex snapshotsMutex_;             ///< Protects snapshots
     std::deque<ActivitySnapshot> snapshots_;        ///< Periodic activity snapshots
-    
+
     mutable std::mutex callbacksMutex_;             ///< Protects callbacks
     std::map<uint64_t, SpikeCallback> callbacks_;   ///< Registered callbacks
     uint64_t nextCallbackId_;                       ///< Next callback ID to assign
+
+    RecordingManager* recordingManager_;            ///< Optional recording manager (nullptr if disabled)
 };
 
 } // namespace snnfw
