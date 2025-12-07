@@ -74,14 +74,14 @@ bool NetworkDataAdapter::extractNetwork(uint64_t brainId) {
 bool NetworkDataAdapter::extractHierarchy(uint64_t rootId, const std::string& typeName) {
     clearCache();
 
+    // Build hierarchical groups FIRST (needed by computeHierarchicalContext)
+    buildHierarchicalGroups(rootId, typeName);
+
     // Extract neurons from this hierarchy
     extractNeurons(rootId, typeName);
 
     // Extract synapses connecting these neurons
     extractSynapses();
-
-    // Build hierarchical groups
-    buildHierarchicalGroups(rootId, typeName);
 
     return neurons_.size() > 0;
 }
@@ -141,14 +141,17 @@ void NetworkDataAdapter::extractNeurons(uint64_t rootId, const std::string& type
                 auto clusterNeuronIds = cluster->getNeuronIds();
                 neuronIds.insert(neuronIds.end(), clusterNeuronIds.begin(), clusterNeuronIds.end());
             }
-        } else {
-            // Recurse to children
+        } else if (!type.empty()) {
+            // Recurse to children (only if type is not empty)
             auto childStats = inspector_.inspectHierarchy(id, type, datastore_);
             // Make a copy of childIds before iterating, since recursive calls may modify it
             auto childIds = childStats.childIds;
-            for (uint64_t childId : childIds) {
-                std::string childType = getChildType(type);
-                collectNeurons(childId, childType);
+            std::string childType = getChildType(type);
+            // Only recurse if we have a valid child type
+            if (!childType.empty()) {
+                for (uint64_t childId : childIds) {
+                    collectNeurons(childId, childType);
+                }
             }
         }
     };
@@ -240,9 +243,12 @@ void NetworkDataAdapter::extractSynapses() {
 void NetworkDataAdapter::buildHierarchicalGroups(uint64_t rootId, const std::string& typeName) {
     // Build groups recursively
     std::function<void(uint64_t, const std::string&, uint64_t)> buildGroups;
-    
+
     buildGroups = [&](uint64_t id, const std::string& type, uint64_t parentId) {
         auto stats = inspector_.inspectHierarchy(id, type, datastore_);
+
+        // Debug output
+        std::cout << "    Building group: " << type << " " << id << " (" << stats.name << ") parent=" << parentId << std::endl;
 
         HierarchicalGroup group;
         group.id = id;
@@ -254,20 +260,19 @@ void NetworkDataAdapter::buildHierarchicalGroups(uint64_t rootId, const std::str
         if (type == "Cluster") {
             auto cluster = datastore_.getCluster(id);
             if (cluster) {
-                auto neuronIds = cluster->getNeuronIds();
-                for (uint64_t nid : neuronIds) {
-                    if (neuronIndexMap_.find(nid) != neuronIndexMap_.end()) {
-                        group.neuronIds.push_back(nid);
-                    }
-                }
+                // Get ALL neuron IDs from the cluster
+                // Don't filter by neuronIndexMap_ because neurons haven't been extracted yet
+                group.neuronIds = cluster->getNeuronIds();
             }
         }
         
-        // Recurse to children
-        for (uint64_t childId : stats.childIds) {
-            std::string childType = getChildType(type);
-            group.childGroupIds.push_back(childId);
-            buildGroups(childId, childType, id);
+        // Recurse to children (only if we have a valid child type)
+        std::string childType = getChildType(type);
+        if (!childType.empty()) {
+            for (uint64_t childId : stats.childIds) {
+                group.childGroupIds.push_back(childId);
+                buildGroups(childId, childType, id);
+            }
         }
         
         groups_.push_back(group);
@@ -277,25 +282,43 @@ void NetworkDataAdapter::buildHierarchicalGroups(uint64_t rootId, const std::str
 }
 
 void NetworkDataAdapter::computeHierarchicalContext(NeuronVisualData& neuron) {
+    // Build a map of group ID to group for quick lookup
+    std::unordered_map<uint64_t, const HierarchicalGroup*> groupMap;
+    for (const auto& group : groups_) {
+        groupMap[group.id] = &group;
+    }
+
     // Find the cluster containing this neuron
     for (const auto& group : groups_) {
         if (group.typeName == "Cluster") {
             auto it = std::find(group.neuronIds.begin(), group.neuronIds.end(), neuron.id);
             if (it != group.neuronIds.end()) {
                 neuron.clusterId = group.id;
-                
-                // Find parent layer
-                for (const auto& layerGroup : groups_) {
-                    if (layerGroup.typeName == "Layer") {
-                        auto cit = std::find(layerGroup.childGroupIds.begin(), 
-                                           layerGroup.childGroupIds.end(), 
-                                           group.id);
-                        if (cit != layerGroup.childGroupIds.end()) {
-                            neuron.layerId = layerGroup.id;
-                            // Continue up the hierarchy...
-                            break;
-                        }
+
+                // Traverse up the hierarchy to find all parent levels
+                uint64_t currentId = group.parentGroupId;
+                while (currentId != 0) {
+                    auto git = groupMap.find(currentId);
+                    if (git == groupMap.end()) break;
+
+                    const HierarchicalGroup* parent = git->second;
+                    if (parent->typeName == "Layer") {
+                        neuron.layerId = parent->id;
+                    } else if (parent->typeName == "Column") {
+                        neuron.columnId = parent->id;
+                    } else if (parent->typeName == "Nucleus") {
+                        neuron.nucleusId = parent->id;
+                    } else if (parent->typeName == "Region") {
+                        neuron.regionId = parent->id;
+                    } else if (parent->typeName == "Lobe") {
+                        neuron.lobeId = parent->id;
+                    } else if (parent->typeName == "Hemisphere") {
+                        neuron.hemisphereId = parent->id;
+                    } else if (parent->typeName == "Brain") {
+                        neuron.brainId = parent->id;
                     }
+
+                    currentId = parent->parentGroupId;
                 }
                 break;
             }

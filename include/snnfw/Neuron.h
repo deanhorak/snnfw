@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <memory>
 #include <deque>
+#include <mutex>
 
 namespace snnfw {
 
@@ -153,15 +154,21 @@ public:
     const std::vector<BinaryPattern>& getLearnedPatterns() const { return referencePatterns; }
 
     /**
-     * @brief Get all spikes from the rolling window
+     * @brief Get all spikes from the rolling window (thread-safe copy)
      * @return Vector of spike times
      */
-    std::vector<double> getSpikes() const { return spikes; }
+    std::vector<double> getSpikes() const {
+        std::lock_guard<std::mutex> lock(spikesMutex_);
+        return spikes;
+    }
 
     /**
-     * @brief Clear all spikes from the rolling window
+     * @brief Clear all spikes from the rolling window (thread-safe)
      */
-    void clearSpikes() { spikes.clear(); }
+    void clearSpikes() {
+        std::lock_guard<std::mutex> lock(spikesMutex_);
+        spikes.clear();
+    }
 
     /**
      * @brief Set the axon ID for this neuron
@@ -321,6 +328,7 @@ private:
     };
 
     std::vector<double> spikes;                          ///< Rolling spike window (temporary, converted to BinaryPattern)
+    mutable std::mutex spikesMutex_;                     ///< Mutex to protect spikes vector from concurrent access
     std::vector<BinaryPattern> referencePatterns;        ///< Learned reference patterns (200 bytes each, FIXED SIZE)
     double windowSize;                                   ///< Size of rolling window in ms
     double threshold;                                    ///< Similarity threshold for firing
@@ -334,6 +342,7 @@ private:
 
     // STDP-related members
     std::deque<IncomingSpike> incomingSpikes_;           ///< Recent incoming spikes for STDP (within window)
+    mutable std::mutex incomingSpikesMutex_;             ///< Mutex to protect incomingSpikes_ from concurrent access
     std::weak_ptr<NetworkPropagator> networkPropagator_; ///< Reference to NetworkPropagator for sending acknowledgments
 
     // Temporal signature - unique spike pattern for this neuron
@@ -361,6 +370,12 @@ private:
      * @param currentTime Current timestamp
      */
     void removeOldSpikes(double currentTime);
+
+    /**
+     * @brief Remove old spikes from the rolling window (unsafe - caller must hold spikesMutex_)
+     * @param currentTime Current timestamp
+     */
+    void removeOldSpikesUnsafe(double currentTime);
 
     /**
      * @brief Compute similarity between two patterns using the selected metric

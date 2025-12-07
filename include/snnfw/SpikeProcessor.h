@@ -216,6 +216,12 @@ private:
     void cleanupCompletedThreads();
 
     /**
+     * @brief Wait for all active delivery threads to complete
+     * Used in non-real-time mode to ensure spike propagation completes before advancing time
+     */
+    void waitForDeliveryThreads();
+
+    /**
      * @brief Get the time slice index for a given time
      * @param timeMs Time in milliseconds
      * @return Time slice index, or -1 if out of range

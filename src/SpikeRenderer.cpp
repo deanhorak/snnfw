@@ -178,7 +178,6 @@ void SpikeRenderer::renderSpikeParticles(
     // Set uniforms
     shaderManager_.setUniform("view", camera.getViewMatrix());
     shaderManager_.setUniform("projection", camera.getProjectionMatrix(800.0f / 600.0f));
-    shaderManager_.setUniform("cameraPos", camera.getPosition());
     shaderManager_.setUniform("glowIntensity", config.glowIntensity);
     shaderManager_.setUniform("particleAlpha", config.particleAlpha);
     

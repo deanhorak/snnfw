@@ -14,6 +14,7 @@ namespace snnfw {
  */
 enum class LayoutAlgorithm {
     HIERARCHICAL_TREE,      ///< Tree-based hierarchical layout
+    HIERARCHICAL_GROUPED,   ///< Hierarchical layout with spatial grouping by level
     FORCE_DIRECTED,         ///< Physics-based force-directed layout
     GRID,                   ///< Regular grid layout
     CIRCULAR,               ///< Circular/radial layout
@@ -177,6 +178,15 @@ public:
      * @return True if successful
      */
     bool computeHierarchicalTreeLayout(NetworkDataAdapter& adapter, const LayoutConfig& config);
+
+    /**
+     * @brief Compute hierarchical grouped layout
+     * Spatially groups clusters within layers, layers within columns, etc.
+     * @param adapter Network data adapter
+     * @param config Layout configuration
+     * @return True if successful
+     */
+    bool computeHierarchicalGroupedLayout(NetworkDataAdapter& adapter, const LayoutConfig& config);
     
     /**
      * @brief Compute force-directed layout
@@ -262,6 +272,7 @@ private:
     TreeNode* buildHierarchyTree(NetworkDataAdapter& adapter);
     void computeTreePositions(TreeNode* node, const LayoutConfig& config, int depth);
     void assignTreePositions(TreeNode* node, NetworkDataAdapter& adapter);
+    void assignTreePositions(TreeNode* node, NetworkDataAdapter& adapter, const LayoutConfig& config);
     void deleteTree(TreeNode* node);
     
     // Force-directed layout helpers
@@ -293,16 +304,22 @@ private:
     
     // Anatomical layout helpers
     void assignAnatomicalPositions(NetworkDataAdapter& adapter, const LayoutConfig& config);
-    
+
+    // Hierarchical grouped layout helpers
+    void assignHierarchicalGroupedPositions(NetworkDataAdapter& adapter, const LayoutConfig& config);
+
     // Utility functions
     void reportProgress(float progress);
     
     // Progress callback
     std::function<void(float)> progressCallback_;
-    
+
     // Bounding box
     Position3D boundingBoxMin_;
     Position3D boundingBoxMax_;
+
+    // Current config (for use in helper functions)
+    LayoutConfig currentConfig_;
 };
 
 } // namespace snnfw

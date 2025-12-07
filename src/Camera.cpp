@@ -120,15 +120,17 @@ void Camera::updatePosition() {
 void Camera::updateSpherical() {
     glm::vec3 offset = position_ - target_;
     distance_ = glm::length(offset);
-    
+
     if (distance_ > 0.0001f) {
         offset = glm::normalize(offset);
-        
+
         // Calculate yaw (horizontal angle)
         yaw_ = atan2(offset.x, offset.z);
-        
+
         // Calculate pitch (vertical angle)
-        pitch_ = asin(offset.y);
+        // Clamp offset.y to [-1, 1] to avoid NaN from asin
+        float clampedY = glm::clamp(offset.y, -1.0f, 1.0f);
+        pitch_ = asin(clampedY);
     } else {
         // Camera is at target, use default orientation
         yaw_ = 0.0f;

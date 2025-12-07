@@ -57,11 +57,12 @@ bool NetworkGraphRenderer::initialize() {
 
 bool NetworkGraphRenderer::createNeuronBuffers() {
     // Generate sphere geometry (unit sphere)
+    // Using lower poly count for better performance with instanced rendering
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
-    
-    const int segments = 16;
-    const int rings = 8;
+
+    const int segments = 12;  // Reduced from 16 for better performance
+    const int rings = 6;      // Reduced from 8 for better performance
     const float radius = 1.0f;
     
     // Generate vertices
@@ -129,9 +130,10 @@ bool NetworkGraphRenderer::createNeuronBuffers() {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, neuronEBO_);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
     
-    // Create instance VBO (will be filled per frame)
+    // Create instance VBO (pre-allocate for up to 100k neurons)
     glGenBuffers(1, &neuronInstanceVBO_);
     glBindBuffer(GL_ARRAY_BUFFER, neuronInstanceVBO_);
+    glBufferData(GL_ARRAY_BUFFER, 100000 * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     
     // Instance position (location 2)
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
@@ -157,10 +159,11 @@ bool NetworkGraphRenderer::createSynapseBuffers() {
     // Create VAO for synapses (lines)
     glGenVertexArrays(1, &synapseVAO_);
     glBindVertexArray(synapseVAO_);
-    
-    // Create VBO (will be filled per frame)
+
+    // Create VBO (pre-allocate for up to 1M synapses)
     glGenBuffers(1, &synapseVBO_);
     glBindBuffer(GL_ARRAY_BUFFER, synapseVBO_);
+    glBufferData(GL_ARRAY_BUFFER, 1000000 * 14 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     
     // Position attribute (location 0)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
@@ -339,10 +342,10 @@ void NetworkGraphRenderer::renderNeuronsInstanced(const std::vector<NeuronVisual
                                                  const Camera& camera,
                                                  const RenderConfig& config) {
     if (neurons.empty()) return;
-    
+
     // Prepare instance data
     std::vector<float> instanceData;
-    instanceData.reserve(neurons.size() * 8);  // 3 pos + 4 color + 1 radius
+    instanceData.reserve(neurons.size() * 8);  // 3 pos + 4 color + 1 radius = 8 floats per neuron
     
     size_t renderedCount = 0;
     for (const auto& neuron : neurons) {
@@ -375,10 +378,19 @@ void NetworkGraphRenderer::renderNeuronsInstanced(const std::vector<NeuronVisual
     }
     
     if (renderedCount == 0) return;
-    
-    // Upload instance data
+
+    // Upload instance data (use SubData for better performance if data fits in pre-allocated buffer)
     glBindBuffer(GL_ARRAY_BUFFER, neuronInstanceVBO_);
-    glBufferData(GL_ARRAY_BUFFER, instanceData.size() * sizeof(float), instanceData.data(), GL_DYNAMIC_DRAW);
+    size_t dataSize = instanceData.size() * sizeof(float);
+    size_t maxBufferSize = 100000 * 8 * sizeof(float);
+
+    if (dataSize <= maxBufferSize) {
+        // Use glBufferSubData for better performance (no reallocation)
+        glBufferSubData(GL_ARRAY_BUFFER, 0, dataSize, instanceData.data());
+    } else {
+        // Reallocate if needed (rare case with >100k neurons)
+        glBufferData(GL_ARRAY_BUFFER, dataSize, instanceData.data(), GL_DYNAMIC_DRAW);
+    }
     
     // Use shader
     shaderManager_.useShader("network_neuron");
@@ -455,10 +467,19 @@ void NetworkGraphRenderer::renderSynapsesLines(const std::vector<SynapseVisualDa
     }
     
     if (renderedCount == 0) return;
-    
-    // Upload line data
+
+    // Upload line data (use SubData for better performance if data fits in pre-allocated buffer)
     glBindBuffer(GL_ARRAY_BUFFER, synapseVBO_);
-    glBufferData(GL_ARRAY_BUFFER, lineData.size() * sizeof(float), lineData.data(), GL_DYNAMIC_DRAW);
+    size_t dataSize = lineData.size() * sizeof(float);
+    size_t maxBufferSize = 1000000 * 14 * sizeof(float);
+
+    if (dataSize <= maxBufferSize) {
+        // Use glBufferSubData for better performance (no reallocation)
+        glBufferSubData(GL_ARRAY_BUFFER, 0, dataSize, lineData.data());
+    } else {
+        // Reallocate if needed (rare case with >1M synapses)
+        glBufferData(GL_ARRAY_BUFFER, dataSize, lineData.data(), GL_DYNAMIC_DRAW);
+    }
     
     // Use shader
     shaderManager_.useShader("network_synapse");

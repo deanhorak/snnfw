@@ -14,6 +14,8 @@ bool LayoutEngine::computeLayout(NetworkDataAdapter& adapter, const LayoutConfig
     switch (config.algorithm) {
         case LayoutAlgorithm::HIERARCHICAL_TREE:
             return computeHierarchicalTreeLayout(adapter, config);
+        case LayoutAlgorithm::HIERARCHICAL_GROUPED:
+            return computeHierarchicalGroupedLayout(adapter, config);
         case LayoutAlgorithm::FORCE_DIRECTED:
             return computeForceDirectedLayout(adapter, config);
         case LayoutAlgorithm::GRID:
@@ -31,26 +33,29 @@ bool LayoutEngine::computeLayout(NetworkDataAdapter& adapter, const LayoutConfig
 
 bool LayoutEngine::computeHierarchicalTreeLayout(NetworkDataAdapter& adapter, const LayoutConfig& config) {
     reportProgress(0.0f);
-    
+
+    // Store config for use in assignTreePositions
+    currentConfig_ = config;
+
     // Build hierarchy tree
     TreeNode* root = buildHierarchyTree(adapter);
     if (!root) return false;
-    
+
     reportProgress(0.3f);
-    
+
     // Compute positions recursively
     computeTreePositions(root, config, 0);
-    
+
     reportProgress(0.7f);
-    
+
     // Assign positions to neurons
-    assignTreePositions(root, adapter);
-    
+    assignTreePositions(root, adapter, config);
+
     reportProgress(0.9f);
-    
+
     // Cleanup
     deleteTree(root);
-    
+
     // Post-processing
     if (config.centerLayout) {
         centerLayout(adapter);
@@ -58,7 +63,7 @@ bool LayoutEngine::computeHierarchicalTreeLayout(NetworkDataAdapter& adapter, co
     if (config.normalizePositions) {
         normalizePositions(adapter, config.boundingBoxSize);
     }
-    
+
     reportProgress(1.0f);
     return true;
 }
@@ -143,44 +148,52 @@ void LayoutEngine::computeTreePositions(TreeNode* node, const LayoutConfig& conf
 }
 
 void LayoutEngine::assignTreePositions(TreeNode* node, NetworkDataAdapter& adapter) {
+    assignTreePositions(node, adapter, currentConfig_);
+}
+
+void LayoutEngine::assignTreePositions(TreeNode* node, NetworkDataAdapter& adapter, const LayoutConfig& config) {
     if (!node) return;
-    
+
     // If this is a cluster, assign positions to its neurons
     if (node->type == "Cluster") {
         auto neurons = adapter.getNeuronsByLevel("Cluster", node->id);
-        
+
         // Arrange neurons in a grid within the cluster
         int gridSize = static_cast<int>(std::ceil(std::sqrt(neurons.size())));
         float spacing = 1.0f;
-        
+
         for (size_t i = 0; i < neurons.size(); ++i) {
             int row = i / gridSize;
             int col = i % gridSize;
-            
+
             Position3D pos;
             pos.x = node->position.x + (col - gridSize/2.0f) * spacing;
             pos.y = node->position.y;
             pos.z = node->position.z + (row - gridSize/2.0f) * spacing;
-            
+
             // Update neuron position in adapter
             auto& allNeurons = const_cast<std::vector<NeuronVisualData>&>(adapter.getNeurons());
             for (auto& neuron : allNeurons) {
                 if (neuron.id == neurons[i].id) {
-                    neuron.position = pos;
+                    // Only override if configured to do so, or if position is not set (all zeros)
+                    bool hasPosition = (neuron.position.x != 0.0f || neuron.position.y != 0.0f || neuron.position.z != 0.0f);
+                    if (config.overrideStoredPositions || !hasPosition) {
+                        neuron.position = pos;
+                    }
                     break;
                 }
             }
         }
     }
-    
+
     // Recurse to children
     for (TreeNode* child : node->children) {
         // Offset child position by parent position
         child->position.x += node->position.x;
         child->position.y += node->position.y;
         child->position.z += node->position.z;
-        
-        assignTreePositions(child, adapter);
+
+        assignTreePositions(child, adapter, config);
     }
 }
 
@@ -493,6 +506,126 @@ void LayoutEngine::normalizePositions(NetworkDataAdapter& adapter, float boxSize
 void LayoutEngine::reportProgress(float progress) {
     if (progressCallback_) {
         progressCallback_(progress);
+    }
+}
+
+bool LayoutEngine::computeHierarchicalGroupedLayout(NetworkDataAdapter& adapter, const LayoutConfig& config) {
+    reportProgress(0.0f);
+
+    assignHierarchicalGroupedPositions(adapter, config);
+
+    reportProgress(0.8f);
+
+    // Post-processing
+    if (config.centerLayout) {
+        centerLayout(adapter);
+    }
+    if (config.normalizePositions) {
+        normalizePositions(adapter, config.boundingBoxSize);
+    }
+
+    reportProgress(1.0f);
+    return true;
+}
+
+void LayoutEngine::assignHierarchicalGroupedPositions(NetworkDataAdapter& adapter, const LayoutConfig& config) {
+    auto& neurons = const_cast<std::vector<NeuronVisualData>&>(adapter.getNeurons());
+    const auto& groups = adapter.getGroups();
+
+    // Build maps for quick lookup
+    std::map<uint64_t, const HierarchicalGroup*> groupMap;
+    for (const auto& group : groups) {
+        groupMap[group.id] = &group;
+    }
+
+    // Group neurons by each hierarchical level
+    std::map<uint64_t, std::vector<NeuronVisualData*>> columnNeurons;
+    std::map<uint64_t, std::vector<NeuronVisualData*>> layerNeurons;
+    std::map<uint64_t, std::vector<NeuronVisualData*>> clusterNeurons;
+
+    for (auto& neuron : neurons) {
+        if (neuron.columnId != 0) columnNeurons[neuron.columnId].push_back(&neuron);
+        if (neuron.layerId != 0) layerNeurons[neuron.layerId].push_back(&neuron);
+        if (neuron.clusterId != 0) clusterNeurons[neuron.clusterId].push_back(&neuron);
+    }
+
+    // Layout columns in a grid
+    std::vector<uint64_t> columnIds;
+    for (const auto& [columnId, _] : columnNeurons) {
+        columnIds.push_back(columnId);
+    }
+    std::sort(columnIds.begin(), columnIds.end());
+
+    int numColumns = columnIds.size();
+    int columnsPerRow = static_cast<int>(std::ceil(std::sqrt(static_cast<float>(numColumns))));
+
+    for (size_t colIdx = 0; colIdx < columnIds.size(); ++colIdx) {
+        uint64_t columnId = columnIds[colIdx];
+
+        // Calculate column base position
+        int colRow = colIdx / columnsPerRow;
+        int colCol = colIdx % columnsPerRow;
+        float columnBaseX = colCol * config.columnSpacing;
+        float columnBaseZ = colRow * config.columnSpacing;
+
+        // Get layers in this column
+        std::vector<uint64_t> layerIdsInColumn;
+        for (const auto& group : groups) {
+            if (group.typeName == "Layer" && group.parentGroupId == columnId) {
+                layerIdsInColumn.push_back(group.id);
+            }
+        }
+        std::sort(layerIdsInColumn.begin(), layerIdsInColumn.end());
+
+        // Layout layers vertically within the column
+        for (size_t layerIdx = 0; layerIdx < layerIdsInColumn.size(); ++layerIdx) {
+            uint64_t layerId = layerIdsInColumn[layerIdx];
+            float layerBaseY = layerIdx * config.layerSpacing;
+
+            // Get clusters in this layer
+            std::vector<uint64_t> clusterIdsInLayer;
+            for (const auto& group : groups) {
+                if (group.typeName == "Cluster" && group.parentGroupId == layerId) {
+                    clusterIdsInLayer.push_back(group.id);
+                }
+            }
+            std::sort(clusterIdsInLayer.begin(), clusterIdsInLayer.end());
+
+            // Layout clusters in a small grid within the layer
+            int clustersPerRow = static_cast<int>(std::ceil(std::sqrt(static_cast<float>(clusterIdsInLayer.size()))));
+
+            for (size_t clusterIdx = 0; clusterIdx < clusterIdsInLayer.size(); ++clusterIdx) {
+                uint64_t clusterId = clusterIdsInLayer[clusterIdx];
+
+                // Calculate cluster offset within layer
+                int clusterRow = clusterIdx / clustersPerRow;
+                int clusterCol = clusterIdx % clustersPerRow;
+                float clusterOffsetX = clusterCol * config.clusterSpacing;
+                float clusterOffsetZ = clusterRow * config.clusterSpacing;
+
+                // Position neurons within cluster
+                auto it = clusterNeurons.find(clusterId);
+                if (it != clusterNeurons.end()) {
+                    auto& neuronsInCluster = it->second;
+                    int neuronsPerRow = static_cast<int>(std::ceil(std::sqrt(static_cast<float>(neuronsInCluster.size()))));
+
+                    for (size_t neuronIdx = 0; neuronIdx < neuronsInCluster.size(); ++neuronIdx) {
+                        auto* neuron = neuronsInCluster[neuronIdx];
+
+                        // Only set position if not already set (unless overriding)
+                        bool hasPosition = (neuron->position.x != 0.0f || neuron->position.y != 0.0f || neuron->position.z != 0.0f);
+                        if (config.overrideStoredPositions || !hasPosition) {
+                            int neuronRow = neuronIdx / neuronsPerRow;
+                            int neuronCol = neuronIdx % neuronsPerRow;
+
+                            neuron->position.x = columnBaseX + clusterOffsetX + neuronCol * config.neuronSpacing;
+                            neuron->position.y = layerBaseY;
+                            neuron->position.z = columnBaseZ + clusterOffsetZ + neuronRow * config.neuronSpacing;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

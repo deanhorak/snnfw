@@ -166,18 +166,52 @@ public:
      * @return Vector of neuron visual data
      */
     const std::vector<NeuronVisualData>& getNeurons() const { return neurons_; }
-    
+
     /**
      * @brief Get all synapses for rendering
      * @return Vector of synapse visual data
      */
     const std::vector<SynapseVisualData>& getSynapses() const { return synapses_; }
-    
+
     /**
      * @brief Get hierarchical groups
      * @return Vector of hierarchical groups
      */
     const std::vector<HierarchicalGroup>& getGroups() const { return groups_; }
+
+    /**
+     * @brief Set neurons directly (for playback/import scenarios)
+     * @param neurons Vector of neuron visual data
+     */
+    void setNeurons(const std::vector<NeuronVisualData>& neurons) {
+        neurons_ = neurons;
+        // Rebuild index map
+        neuronIndexMap_.clear();
+        for (size_t i = 0; i < neurons_.size(); ++i) {
+            neuronIndexMap_[neurons_[i].id] = i;
+        }
+    }
+
+    /**
+     * @brief Set synapses directly (for playback/import scenarios)
+     * @param synapses Vector of synapse visual data
+     */
+    void setSynapses(const std::vector<SynapseVisualData>& synapses) {
+        synapses_ = synapses;
+        // Rebuild index map
+        synapseIndexMap_.clear();
+        for (size_t i = 0; i < synapses_.size(); ++i) {
+            synapseIndexMap_[synapses_[i].id] = i;
+        }
+    }
+
+    /**
+     * @brief Set hierarchical groups directly (for playback/import scenarios)
+     * @param groups Vector of hierarchical groups
+     */
+    void setGroups(const std::vector<HierarchicalGroup>& groups) {
+        groups_ = groups;
+    }
     
     /**
      * @brief Get neurons filtered by hierarchical level

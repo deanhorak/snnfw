@@ -165,7 +165,13 @@ void NetworkInspector::inspectHemisphere(uint64_t hemisphereId, Datastore& datas
 
     // Recursively inspect lobes
     for (uint64_t lobeId : lobeIds) {
-        inspectLobe(lobeId, datastore, stats);
+        HierarchyStats lobeStats;  // Create new stats object for child
+        inspectLobe(lobeId, datastore, lobeStats);
+        // Accumulate child statistics
+        stats.totalNeurons += lobeStats.totalNeurons;
+        stats.totalSynapses += lobeStats.totalSynapses;
+        stats.totalClusters += lobeStats.totalClusters;
+        stats.depth = std::max(stats.depth, lobeStats.depth + 1);
     }
 }
 
@@ -187,7 +193,13 @@ void NetworkInspector::inspectLobe(uint64_t lobeId, Datastore& datastore, Hierar
 
     // Recursively inspect regions
     for (uint64_t regionId : regionIds) {
-        inspectRegion(regionId, datastore, stats);
+        HierarchyStats regionStats;  // Create new stats object for child
+        inspectRegion(regionId, datastore, regionStats);
+        // Accumulate child statistics
+        stats.totalNeurons += regionStats.totalNeurons;
+        stats.totalSynapses += regionStats.totalSynapses;
+        stats.totalClusters += regionStats.totalClusters;
+        stats.depth = std::max(stats.depth, regionStats.depth + 1);
     }
 }
 
@@ -209,7 +221,13 @@ void NetworkInspector::inspectRegion(uint64_t regionId, Datastore& datastore, Hi
 
     // Recursively inspect nuclei
     for (uint64_t nucleusId : nucleusIds) {
-        inspectNucleus(nucleusId, datastore, stats);
+        HierarchyStats nucleusStats;  // Create new stats object for child
+        inspectNucleus(nucleusId, datastore, nucleusStats);
+        // Accumulate child statistics
+        stats.totalNeurons += nucleusStats.totalNeurons;
+        stats.totalSynapses += nucleusStats.totalSynapses;
+        stats.totalClusters += nucleusStats.totalClusters;
+        stats.depth = std::max(stats.depth, nucleusStats.depth + 1);
     }
 }
 
@@ -231,7 +249,13 @@ void NetworkInspector::inspectNucleus(uint64_t nucleusId, Datastore& datastore, 
 
     // Recursively inspect columns
     for (uint64_t columnId : columnIds) {
-        inspectColumn(columnId, datastore, stats);
+        HierarchyStats columnStats;  // Create new stats object for child
+        inspectColumn(columnId, datastore, columnStats);
+        // Accumulate child statistics
+        stats.totalNeurons += columnStats.totalNeurons;
+        stats.totalSynapses += columnStats.totalSynapses;
+        stats.totalClusters += columnStats.totalClusters;
+        stats.depth = std::max(stats.depth, columnStats.depth + 1);
     }
 }
 
@@ -248,12 +272,18 @@ void NetworkInspector::inspectColumn(uint64_t columnId, Datastore& datastore, Hi
     stats.childIds = column->getLayerIds();
     stats.childCount = stats.childIds.size();
 
-    // Make a copy of childIds before iterating, since inspectLayer will overwrite stats.childIds
+    // Make a copy of childIds before iterating
     auto layerIds = stats.childIds;
 
     // Recursively inspect layers
     for (uint64_t layerId : layerIds) {
-        inspectLayer(layerId, datastore, stats);
+        HierarchyStats layerStats;  // Create new stats object for child
+        inspectLayer(layerId, datastore, layerStats);
+        // Accumulate child statistics
+        stats.totalNeurons += layerStats.totalNeurons;
+        stats.totalSynapses += layerStats.totalSynapses;
+        stats.totalClusters += layerStats.totalClusters;
+        stats.depth = std::max(stats.depth, layerStats.depth + 1);
     }
 }
 
@@ -270,12 +300,18 @@ void NetworkInspector::inspectLayer(uint64_t layerId, Datastore& datastore, Hier
     stats.childIds = layer->getClusterIds();
     stats.childCount = stats.childIds.size();
 
-    // Make a copy of childIds before iterating, since inspectCluster will overwrite stats.childIds
+    // Make a copy of childIds before iterating
     auto clusterIds = stats.childIds;
 
     // Recursively inspect clusters
     for (uint64_t clusterId : clusterIds) {
-        inspectCluster(clusterId, datastore, stats);
+        HierarchyStats clusterStats;  // Create new stats object for child
+        inspectCluster(clusterId, datastore, clusterStats);
+        // Accumulate child statistics
+        stats.totalNeurons += clusterStats.totalNeurons;
+        stats.totalSynapses += clusterStats.totalSynapses;
+        stats.totalClusters += clusterStats.totalClusters;
+        stats.depth = std::max(stats.depth, clusterStats.depth + 1);
     }
 }
 

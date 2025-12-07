@@ -145,9 +145,10 @@ public:
     /**
      * @brief Load recording from file
      * @param filename Path to recording file
+     * @param streamingPlayback If true, stream spikes from file during playback instead of loading all into memory
      * @return true if successful
      */
-    bool loadRecording(const std::string& filename);
+    bool loadRecording(const std::string& filename, bool streamingPlayback = false);
     
     // Playback control
     
@@ -232,6 +233,7 @@ private:
 
     // Streaming state
     bool streamingMode_;
+    bool wasStreamedToFile_;  // Track if recording was streamed (for saveRecording)
     std::string streamingFilename_;
     std::ofstream* streamingFile_;
     uint64_t streamedSpikeCount_;
@@ -239,6 +241,13 @@ private:
     // Playback state
     PlaybackState playbackState_;
     size_t playbackIndex_;  // Current index in recording
+
+    // Streaming playback state
+    bool streamingPlayback_;  // If true, stream spikes from file during playback
+    std::string playbackFilename_;  // Filename for streaming playback
+    std::ifstream* playbackFile_;  // File stream for streaming playback
+    uint64_t playbackFileOffset_;  // Current file offset for streaming
+    uint64_t totalSpikesInFile_;  // Total spikes in file (for progress tracking)
 
     // Playback callback
     PlaybackSpikeCallback playbackCallback_;

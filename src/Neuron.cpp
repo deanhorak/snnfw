@@ -34,8 +34,9 @@ Neuron::Neuron(double windowSizeMs, double similarityThreshold, size_t maxRefere
 }
 
 void Neuron::insertSpike(double spikeTime) {
+    std::lock_guard<std::mutex> lock(spikesMutex_);
     spikes.push_back(spikeTime);
-    removeOldSpikes(spikeTime);
+    removeOldSpikesUnsafe(spikeTime);
 
     // NOTE: Removed shouldFire() check here because it causes issues during training
     // When learning patterns, we don't want the neuron to fire based on previously
@@ -48,16 +49,22 @@ void Neuron::insertSpike(double spikeTime) {
 }
 
 void Neuron::learnCurrentPattern() {
-    if (spikes.empty()) {
-        SNNFW_DEBUG("Neuron {}: Cannot learn pattern - no spikes in window", getId());
-        return;
+    // Copy spikes under lock to avoid holding lock during pattern learning
+    std::vector<double> spikesCopy;
+    {
+        std::lock_guard<std::mutex> lock(spikesMutex_);
+        if (spikes.empty()) {
+            SNNFW_DEBUG("Neuron {}: Cannot learn pattern - no spikes in window", getId());
+            return;
+        }
+        spikesCopy = spikes;
     }
 
     // Convert current spike window to BinaryPattern (200 bytes, fixed size)
-    BinaryPattern newPattern(spikes, windowSize);
+    BinaryPattern newPattern(spikesCopy, windowSize);
 
     SNNFW_DEBUG("Neuron {}: Converting {} spike times to BinaryPattern ({} total spikes)",
-                getId(), spikes.size(), newPattern.getTotalSpikes());
+                getId(), spikesCopy.size(), newPattern.getTotalSpikes());
 
     // If a pattern update strategy is set, use it directly with BinaryPattern
     if (patternStrategy_) {
@@ -113,6 +120,7 @@ void Neuron::setPatternUpdateStrategy(std::shared_ptr<learning::PatternUpdateStr
 }
 
 void Neuron::printSpikes() const {
+    std::lock_guard<std::mutex> lock(spikesMutex_);
     std::string spikesStr;
     for (double spikeTime : spikes) {
         spikesStr += std::to_string(spikeTime) + " ";
@@ -128,6 +136,12 @@ void Neuron::printReferencePatterns() const {
 }
 
 void Neuron::removeOldSpikes(double currentTime) {
+    std::lock_guard<std::mutex> lock(spikesMutex_);
+    removeOldSpikesUnsafe(currentTime);
+}
+
+void Neuron::removeOldSpikesUnsafe(double currentTime) {
+    // Note: Caller must hold spikesMutex_ lock
     while (!spikes.empty() && (currentTime - spikes.front() > windowSize)) {
         spikes.erase(spikes.begin());
     }
@@ -246,13 +260,18 @@ bool Neuron::shouldFire() const {
 }
 
 double Neuron::getBestSimilarity() const {
-    // Return 0 if no spikes or no reference patterns
-    if (spikes.empty() || referencePatterns.empty()) {
-        return 0.0;
+    // Copy spikes under lock
+    std::vector<double> spikesCopy;
+    {
+        std::lock_guard<std::mutex> lock(spikesMutex_);
+        if (spikes.empty() || referencePatterns.empty()) {
+            return 0.0;
+        }
+        spikesCopy = spikes;
     }
 
     // Convert current spikes to BinaryPattern
-    BinaryPattern currentPattern(spikes, windowSize);
+    BinaryPattern currentPattern(spikesCopy, windowSize);
 
     double bestSim = -1.0;
 
@@ -472,6 +491,8 @@ bool Neuron::fromJson(const std::string& jsonStr) {
 }
 
 void Neuron::recordIncomingSpike(uint64_t synapseId, double spikeTime, double dispatchTime) {
+    std::lock_guard<std::mutex> lock(incomingSpikesMutex_);
+
     // Add the incoming spike to our tracking deque
     incomingSpikes_.emplace_back(synapseId, spikeTime, dispatchTime);
 
@@ -493,7 +514,14 @@ int Neuron::fireAndAcknowledge(double firingTime) {
 
     // Send acknowledgments to all presynaptic neurons that contributed spikes
     // within the temporal window
-    for (const auto& incomingSpike : incomingSpikes_) {
+    // Note: We make a copy of the spikes under lock to avoid holding the lock during network operations
+    std::vector<IncomingSpike> spikesToAcknowledge;
+    {
+        std::lock_guard<std::mutex> lock(incomingSpikesMutex_);
+        spikesToAcknowledge.assign(incomingSpikes_.begin(), incomingSpikes_.end());
+    }
+
+    for (const auto& incomingSpike : spikesToAcknowledge) {
         // Create acknowledgment with timing information
         auto ack = std::make_shared<SpikeAcknowledgment>(
             incomingSpike.synapseId,
@@ -520,6 +548,7 @@ int Neuron::fireAndAcknowledge(double firingTime) {
 }
 
 void Neuron::clearOldIncomingSpikes(double currentTime) {
+    // Note: Caller must hold incomingSpikesMutex_ lock
     // Remove spikes that are older than the temporal window
     while (!incomingSpikes_.empty() &&
            (currentTime - incomingSpikes_.front().arrivalTime > windowSize)) {
@@ -528,22 +557,30 @@ void Neuron::clearOldIncomingSpikes(double currentTime) {
 }
 
 void Neuron::periodicMemoryCleanup(double currentTime) {
-    // Clear old spikes from the rolling window
-    removeOldSpikes(currentTime);
+    // Clear old spikes from the rolling window and shrink container
+    size_t spikesCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(spikesMutex_);
+        removeOldSpikesUnsafe(currentTime);
+        spikes.shrink_to_fit();
+        spikesCount = spikes.size();
+    }
 
-    // Clear old incoming spikes for STDP
-    clearOldIncomingSpikes(currentTime);
-
-    // Shrink spike containers to fit actual size (release excess capacity)
-    spikes.shrink_to_fit();
-    incomingSpikes_.shrink_to_fit();
+    // Clear old incoming spikes for STDP and shrink container
+    size_t incomingSpikesCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(incomingSpikesMutex_);
+        clearOldIncomingSpikes(currentTime);
+        incomingSpikes_.shrink_to_fit();
+        incomingSpikesCount = incomingSpikes_.size();
+    }
 
     // Shrink pattern storage to fit (BinaryPattern is fixed size, so just shrink the vector)
     referencePatterns.shrink_to_fit();
     // Note: Each BinaryPattern is already fixed at 200 bytes, no need to shrink individual patterns
 
     SNNFW_TRACE("Neuron {}: Memory cleanup - {} spikes, {} incoming spikes, {} patterns ({}KB pattern memory)",
-                getId(), spikes.size(), incomingSpikes_.size(), referencePatterns.size(),
+                getId(), spikesCount, incomingSpikesCount, referencePatterns.size(),
                 (referencePatterns.size() * 200) / 1024);
 }
 

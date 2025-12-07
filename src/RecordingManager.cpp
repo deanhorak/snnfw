@@ -15,9 +15,14 @@ RecordingManager::RecordingManager(ActivityVisualizer& visualizer)
     , recording_(false)
     , recordingStartTime_(0)
     , streamingMode_(false)
+    , wasStreamedToFile_(false)
     , streamingFile_(nullptr)
     , streamedSpikeCount_(0)
     , playbackIndex_(0)
+    , streamingPlayback_(false)
+    , playbackFile_(nullptr)
+    , playbackFileOffset_(0)
+    , totalSpikesInFile_(0)
 {
 }
 
@@ -26,9 +31,14 @@ RecordingManager::RecordingManager()
     , recording_(false)
     , recordingStartTime_(0)
     , streamingMode_(false)
+    , wasStreamedToFile_(false)
     , streamingFile_(nullptr)
     , streamedSpikeCount_(0)
     , playbackIndex_(0)
+    , streamingPlayback_(false)
+    , playbackFile_(nullptr)
+    , playbackFileOffset_(0)
+    , totalSpikesInFile_(0)
 {
 }
 
@@ -40,6 +50,12 @@ RecordingManager::~RecordingManager() {
         }
         delete streamingFile_;
     }
+    if (playbackFile_) {
+        if (playbackFile_->is_open()) {
+            playbackFile_->close();
+        }
+        delete playbackFile_;
+    }
 }
 
 void RecordingManager::startRecording(bool streamToFile, const std::string& filename) {
@@ -48,6 +64,7 @@ void RecordingManager::startRecording(bool streamToFile, const std::string& file
     recording_ = true;
     recordingStartTime_ = 0;  // Will be set on first spike
     streamingMode_ = streamToFile;
+    wasStreamedToFile_ = streamToFile;  // Track for later
     streamedSpikeCount_ = 0;
 
     if (streamingMode_) {
@@ -127,10 +144,17 @@ void RecordingManager::recordSpike(const RecordedSpike& spike) {
 }
 
 bool RecordingManager::saveRecording(const std::string& filename) {
+    // If we were in streaming mode, the file is already written
+    // Just return success (even if no spikes were recorded)
+    if (wasStreamedToFile_) {
+        // File was already written in streaming mode
+        return true;
+    }
+
     if (spikes_.empty()) {
         return false;
     }
-    
+
     updateMetadata();
     
     std::ofstream file(filename, std::ios::binary);
@@ -179,72 +203,129 @@ bool RecordingManager::saveRecording(const std::string& filename) {
     return true;
 }
 
-bool RecordingManager::loadRecording(const std::string& filename) {
+bool RecordingManager::loadRecording(const std::string& filename, bool streamingPlayback) {
+    streamingPlayback_ = streamingPlayback;
+    playbackFilename_ = filename;
+
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         return false;
     }
-    
+
     // Read and verify magic number
     char magic[4];
     file.read(magic, 4);
     if (std::memcmp(magic, "SNNR", 4) != 0) {
         return false;
     }
-    
+
     // Read version
     uint32_t version;
     file.read(reinterpret_cast<char*>(&version), sizeof(version));
     if (version != 1) {
         return false;  // Unsupported version
     }
-    
+
     // Read metadata
     uint32_t metaLength;
     file.read(reinterpret_cast<char*>(&metaLength), sizeof(metaLength));
-    
+
     std::vector<char> metaBuffer(metaLength + 1);
     file.read(metaBuffer.data(), metaLength);
     metaBuffer[metaLength] = '\0';
-    
+
     // Parse metadata (simple parsing, not full JSON)
     std::string metaStr(metaBuffer.data());
     // For now, just extract the values we need
     // In production, use a proper JSON parser
-    
+
     // Read spike count
     uint64_t spikeCount;
     file.read(reinterpret_cast<char*>(&spikeCount), sizeof(spikeCount));
 
-    // Read spikes
-    spikes_.clear();
-    spikes_.reserve(spikeCount);
+    totalSpikesInFile_ = spikeCount;
 
-    for (uint64_t i = 0; i < spikeCount; ++i) {
-        RecordedSpike spike;
-        file.read(reinterpret_cast<char*>(&spike.timestamp), sizeof(spike.timestamp));
-        file.read(reinterpret_cast<char*>(&spike.sourceNeuronId), sizeof(spike.sourceNeuronId));
-        file.read(reinterpret_cast<char*>(&spike.targetNeuronId), sizeof(spike.targetNeuronId));
-        file.read(reinterpret_cast<char*>(&spike.synapseId), sizeof(spike.synapseId));
-        spikes_.push_back(spike);
+    if (streamingPlayback_) {
+        // Streaming mode: don't load spikes into memory, just remember file offset
+        playbackFileOffset_ = file.tellg();  // Save position where spike data starts
+        file.close();
+
+        // Clear any existing spikes from memory
+        spikes_.clear();
+
+        // Open file for streaming playback
+        if (playbackFile_) {
+            if (playbackFile_->is_open()) {
+                playbackFile_->close();
+            }
+            delete playbackFile_;
+        }
+        playbackFile_ = new std::ifstream(filename, std::ios::binary);
+        if (!playbackFile_->is_open()) {
+            return false;
+        }
+        // Seek to spike data start
+        playbackFile_->seekg(playbackFileOffset_);
+    } else {
+        // Legacy mode: load all spikes into memory
+        spikes_.clear();
+        spikes_.reserve(spikeCount);
+
+        for (uint64_t i = 0; i < spikeCount; ++i) {
+            RecordedSpike spike;
+            file.read(reinterpret_cast<char*>(&spike.timestamp), sizeof(spike.timestamp));
+            file.read(reinterpret_cast<char*>(&spike.sourceNeuronId), sizeof(spike.sourceNeuronId));
+            file.read(reinterpret_cast<char*>(&spike.targetNeuronId), sizeof(spike.targetNeuronId));
+            file.read(reinterpret_cast<char*>(&spike.synapseId), sizeof(spike.synapseId));
+            spikes_.push_back(spike);
+        }
+
+        file.close();
     }
     
-    file.close();
-    
     // Update metadata
-    updateMetadata();
-    
+    if (streamingPlayback_) {
+        // For streaming mode, we need to scan the file to get metadata
+        // For now, set basic metadata from file
+        metadata_.spikeCount = totalSpikesInFile_;
+
+        // Read first and last spike to get time range
+        if (totalSpikesInFile_ > 0 && playbackFile_ && playbackFile_->is_open()) {
+            // Read first spike timestamp
+            std::streampos savedPos = playbackFile_->tellg();
+            playbackFile_->seekg(playbackFileOffset_);
+            uint64_t firstTimestamp;
+            playbackFile_->read(reinterpret_cast<char*>(&firstTimestamp), sizeof(firstTimestamp));
+            metadata_.startTime = firstTimestamp;
+
+            // Read last spike timestamp
+            const size_t spikeSize = sizeof(uint64_t) * 4;  // timestamp + 3 IDs
+            playbackFile_->seekg(playbackFileOffset_ + (totalSpikesInFile_ - 1) * spikeSize);
+            uint64_t lastTimestamp;
+            playbackFile_->read(reinterpret_cast<char*>(&lastTimestamp), sizeof(lastTimestamp));
+            metadata_.endTime = lastTimestamp;
+            metadata_.duration = metadata_.endTime - metadata_.startTime;
+
+            // Restore file position
+            playbackFile_->seekg(savedPos);
+        }
+    } else {
+        updateMetadata();
+    }
+
     // Reset playback state
     playbackState_.startTime = metadata_.startTime;
     playbackState_.endTime = metadata_.endTime;
     playbackState_.currentTime = metadata_.startTime;
     playbackIndex_ = 0;
-    
+
     return true;
 }
 
 void RecordingManager::play() {
-    if (spikes_.empty()) return;
+    // Allow playback in streaming mode even if spikes_ is empty
+    if (!streamingPlayback_ && spikes_.empty()) return;
+    if (streamingPlayback_ && (!playbackFile_ || !playbackFile_->is_open())) return;
 
     playbackState_.playing = true;
     playbackState_.paused = false;
@@ -284,7 +365,15 @@ void RecordingManager::seek(uint64_t time) {
 }
 
 void RecordingManager::update(uint64_t deltaTime) {
-    if (!playbackState_.playing || playbackState_.paused || spikes_.empty()) {
+    if (!playbackState_.playing || playbackState_.paused) {
+        return;
+    }
+
+    // Check if we have data to play
+    if (!streamingPlayback_ && spikes_.empty()) {
+        return;
+    }
+    if (streamingPlayback_ && (!playbackFile_ || !playbackFile_->is_open())) {
         return;
     }
 
@@ -292,33 +381,81 @@ void RecordingManager::update(uint64_t deltaTime) {
     uint64_t scaledDelta = static_cast<uint64_t>(deltaTime * playbackState_.speed);
     playbackState_.currentTime += scaledDelta;
 
-    // Play spikes that occurred during this time step
-    while (playbackIndex_ < spikes_.size() &&
-           spikes_[playbackIndex_].timestamp <= playbackState_.currentTime) {
+    if (streamingPlayback_) {
+        // Streaming mode: read spikes from file as needed
+        RecordedSpike spike;
+        const size_t spikeSize = sizeof(spike.timestamp) + sizeof(spike.sourceNeuronId) +
+                                sizeof(spike.targetNeuronId) + sizeof(spike.synapseId);
 
-        const auto& spike = spikes_[playbackIndex_];
+        while (playbackIndex_ < totalSpikesInFile_ && playbackFile_->good()) {
+            // Peek at the next spike's timestamp
+            uint64_t nextTimestamp;
+            std::streampos currentPos = playbackFile_->tellg();
+            playbackFile_->read(reinterpret_cast<char*>(&nextTimestamp), sizeof(nextTimestamp));
 
-        // Call visualizer if available
-        if (visualizer_) {
-            visualizer_->recordSpike(spike.sourceNeuronId, spike.targetNeuronId,
-                                   spike.synapseId, spike.timestamp);
+            if (!playbackFile_->good() || nextTimestamp > playbackState_.currentTime) {
+                // Rewind to before we read the timestamp
+                playbackFile_->seekg(currentPos);
+                break;
+            }
+
+            // Read the rest of the spike
+            spike.timestamp = nextTimestamp;
+            playbackFile_->read(reinterpret_cast<char*>(&spike.sourceNeuronId), sizeof(spike.sourceNeuronId));
+            playbackFile_->read(reinterpret_cast<char*>(&spike.targetNeuronId), sizeof(spike.targetNeuronId));
+            playbackFile_->read(reinterpret_cast<char*>(&spike.synapseId), sizeof(spike.synapseId));
+
+            if (!playbackFile_->good()) {
+                break;
+            }
+
+            // Call visualizer if available
+            if (visualizer_) {
+                visualizer_->recordSpike(spike.sourceNeuronId, spike.targetNeuronId,
+                                       spike.synapseId, spike.timestamp);
+            }
+
+            // Call playback callback if set
+            if (playbackCallback_) {
+                playbackCallback_(spike.sourceNeuronId, spike.targetNeuronId,
+                                spike.synapseId, spike.timestamp);
+            }
+
+            playbackIndex_++;
         }
+    } else {
+        // Legacy mode: play spikes from memory
+        while (playbackIndex_ < spikes_.size() &&
+               spikes_[playbackIndex_].timestamp <= playbackState_.currentTime) {
 
-        // Call playback callback if set
-        if (playbackCallback_) {
-            playbackCallback_(spike.sourceNeuronId, spike.targetNeuronId,
-                            spike.synapseId, spike.timestamp);
+            const auto& spike = spikes_[playbackIndex_];
+
+            // Call visualizer if available
+            if (visualizer_) {
+                visualizer_->recordSpike(spike.sourceNeuronId, spike.targetNeuronId,
+                                       spike.synapseId, spike.timestamp);
+            }
+
+            // Call playback callback if set
+            if (playbackCallback_) {
+                playbackCallback_(spike.sourceNeuronId, spike.targetNeuronId,
+                                spike.synapseId, spike.timestamp);
+            }
+
+            playbackIndex_++;
         }
-
-        playbackIndex_++;
     }
-    
+
     // Check if we've reached the end
     if (playbackState_.currentTime >= playbackState_.endTime) {
         if (playbackState_.looping) {
             // Loop back to start
             playbackState_.currentTime = playbackState_.startTime;
             playbackIndex_ = 0;
+            if (streamingPlayback_ && playbackFile_) {
+                playbackFile_->clear();  // Clear EOF flag
+                playbackFile_->seekg(playbackFileOffset_);  // Seek back to start of spike data
+            }
         } else {
             // Stop playback
             stop();

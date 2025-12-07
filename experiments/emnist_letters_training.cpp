@@ -46,6 +46,8 @@
 #include "snnfw/ActivityMonitor.h"
 #include "snnfw/SimulationConfig.h"
 #include "snnfw/RecordingManager.h"
+#include "snnfw/NetworkDataAdapter.h"
+#include "snnfw/LayoutEngine.h"
 
 using namespace snnfw;
 
@@ -251,7 +253,7 @@ int main(int argc, char* argv[]) {
     snnfw::SimulationConfig simConfig;
     simConfig.enableVisualization = false;  // No visualization
     simConfig.enableRecording = false;      // Default: no recording
-    simConfig.realTimeSync = true;          // Enable for correct spike propagation
+    simConfig.realTimeSync = false;         // Disabled for fast training (run as fast as possible)
 
     TrainingConfig config;
 
@@ -300,8 +302,9 @@ int main(int argc, char* argv[]) {
     RecordingManager* recordingManager = nullptr;
     if (simConfig.enableRecording) {
         recordingManager = new RecordingManager();
-        activityMonitor.setRecordingManager(recordingManager);
-        std::cout << "Recording enabled: " << simConfig.recordingFilename << std::endl;
+        // Use streaming mode to write spikes directly to disk (avoids memory issues with large recordings)
+        activityMonitor.setRecordingManager(recordingManager, true, simConfig.recordingFilename);
+        std::cout << "Recording enabled (streaming to file): " << simConfig.recordingFilename << std::endl;
     }
 
     // ========================================================================
@@ -598,87 +601,112 @@ int main(int argc, char* argv[]) {
     for (auto& col : corticalColumns) {
         // L4 → L2/3 connections
         for (auto& l4Neuron : col.layer4Neurons) {
+            auto axon = datastore.getAxon(l4Neuron->getAxonId());
+            if (!axon) continue;
+
             for (auto& l23Neuron : col.layer23Neurons) {
                 if (dis(gen) < config.layer4ToLayer23Prob) {
                     auto synapse = factory.createSynapse(
-                        l4Neuron->getAxonId(),
+                        axon->getId(),
                         l23Neuron->getDendriteIds()[0],
                         config.initialWeight,
                         config.maxWeight
                     );
+                    axon->addSynapse(synapse->getId());
                     allSynapses.push_back(synapse);
                     datastore.put(synapse);
                     totalSynapses++;
                 }
             }
+            datastore.put(axon);
         }
 
         // L4 → L5 connections (direct, bypassing L2/3)
         for (auto& l4Neuron : col.layer4Neurons) {
+            auto axon = datastore.getAxon(l4Neuron->getAxonId());
+            if (!axon) continue;
+
             for (auto& l5Neuron : col.layer5Neurons) {
                 if (dis(gen) < config.layer4ToLayer5Prob) {
                     auto synapse = factory.createSynapse(
-                        l4Neuron->getAxonId(),
+                        axon->getId(),
                         l5Neuron->getDendriteIds()[0],
                         config.initialWeight,
                         config.maxWeight
                     );
+                    axon->addSynapse(synapse->getId());
                     allSynapses.push_back(synapse);
                     datastore.put(synapse);
                     totalSynapses++;
                 }
             }
+            datastore.put(axon);
         }
 
         // L2/3 → L5 connections
         for (auto& l23Neuron : col.layer23Neurons) {
+            auto axon = datastore.getAxon(l23Neuron->getAxonId());
+            if (!axon) continue;
+
             for (auto& l5Neuron : col.layer5Neurons) {
                 if (dis(gen) < config.layer23ToLayer5Prob) {
                     auto synapse = factory.createSynapse(
-                        l23Neuron->getAxonId(),
+                        axon->getId(),
                         l5Neuron->getDendriteIds()[0],
                         config.initialWeight,
                         config.maxWeight
                     );
+                    axon->addSynapse(synapse->getId());
                     allSynapses.push_back(synapse);
                     datastore.put(synapse);
                     totalSynapses++;
                 }
             }
+            datastore.put(axon);
         }
 
         // L5 → L6 connections
         for (auto& l5Neuron : col.layer5Neurons) {
+            auto axon = datastore.getAxon(l5Neuron->getAxonId());
+            if (!axon) continue;
+
             for (auto& l6Neuron : col.layer6Neurons) {
                 if (dis(gen) < config.layer5ToLayer6Prob) {
                     auto synapse = factory.createSynapse(
-                        l5Neuron->getAxonId(),
+                        axon->getId(),
                         l6Neuron->getDendriteIds()[0],
                         config.initialWeight,
                         config.maxWeight
                     );
+                    axon->addSynapse(synapse->getId());
                     allSynapses.push_back(synapse);
                     datastore.put(synapse);
                     totalSynapses++;
                 }
             }
+            datastore.put(axon);
         }
 
         // L6 → L4 feedback connections
         for (auto& l6Neuron : col.layer6Neurons) {
+            auto axon = datastore.getAxon(l6Neuron->getAxonId());
+            if (!axon) continue;
+
             for (auto& l4Neuron : col.layer4Neurons) {
                 if (dis(gen) < config.layer6ToLayer4Prob) {
                     auto synapse = factory.createSynapse(
-                        l6Neuron->getAxonId(),
+                        axon->getId(),
                         l4Neuron->getDendriteIds()[0],
                         config.initialWeight,
                         config.maxWeight
                     );
+                    axon->addSynapse(synapse->getId());
                     allSynapses.push_back(synapse);
                     datastore.put(synapse);
                     totalSynapses++;
                 }
             }
+            datastore.put(axon);
         }
     }
     std::cout << "  ✓ Created " << totalSynapses << " inter-layer synapses" << std::endl;
@@ -688,21 +716,26 @@ int main(int argc, char* argv[]) {
     int outputSynapses = 0;
     for (auto& col : corticalColumns) {
         for (auto& l5Neuron : col.layer5Neurons) {
+            auto axon = datastore.getAxon(l5Neuron->getAxonId());
+            if (!axon) continue;
+
             for (int i = 0; i < NUM_LETTERS; ++i) {
                 for (auto& outputNeuron : outputPopulations[i]) {
                     if (dis(gen) < 0.5) {  // 50% connectivity to output
                         auto synapse = factory.createSynapse(
-                            l5Neuron->getAxonId(),
+                            axon->getId(),
                             outputNeuron->getDendriteIds()[0],
                             config.initialWeight,
                             config.maxWeight
                         );
+                        axon->addSynapse(synapse->getId());
                         allSynapses.push_back(synapse);
                         datastore.put(synapse);
                         outputSynapses++;
                     }
                 }
             }
+            datastore.put(axon);
         }
     }
     std::cout << "  ✓ Created " << outputSynapses << " Layer 5 → Output synapses" << std::endl;
@@ -753,6 +786,60 @@ int main(int argc, char* argv[]) {
         networkPropagator->registerSynapse(synapse);
     }
     std::cout << "  ✓ Registered all neurons, axons, dendrites, and synapses" << std::endl;
+
+    // ========================================================================
+    // Export Network Structure for Visualization
+    // ========================================================================
+    if (simConfig.enableRecording) {
+        std::cout << "\nExporting network structure for visualization..." << std::endl;
+
+        // Flush all objects to datastore to ensure they're available
+        std::cout << "  Flushing datastore..." << std::endl;
+        size_t flushed = datastore.flushAll();
+        std::cout << "  ✓ Flushed " << flushed << " objects to disk" << std::endl;
+
+        // Create NetworkDataAdapter and extract network
+        NetworkDataAdapter adapter(datastore, inspector, &activityMonitor);
+        std::cout << "  Extracting network from brain (ID: " << brain->getId() << ")..." << std::endl;
+
+        if (!adapter.extractNetwork(brain->getId())) {
+            std::cerr << "  WARNING: Failed to extract network structure!" << std::endl;
+        } else {
+            std::cout << "  ✓ Extracted " << adapter.getNeurons().size() << " neurons and "
+                      << adapter.getSynapses().size() << " synapses" << std::endl;
+
+            // Compute layout for visualization
+            std::cout << "  Computing hierarchical grouped layout..." << std::endl;
+            LayoutEngine layoutEngine;
+            LayoutConfig layoutConfig;
+            layoutConfig.algorithm = LayoutAlgorithm::HIERARCHICAL_GROUPED;
+            layoutConfig.layerSpacing = 50.0f;
+            layoutConfig.columnSpacing = 100.0f;
+            layoutConfig.clusterSpacing = 15.0f;
+            layoutConfig.neuronSpacing = 2.0f;
+            layoutConfig.overrideStoredPositions = false;  // Respect manually set positions
+            layoutEngine.computeLayout(adapter, layoutConfig);
+            adapter.updateSynapsePositions();
+            std::cout << "  ✓ Layout computed" << std::endl;
+
+            // Export to .snnw file
+            std::string networkFilename = simConfig.recordingFilename;
+            // Replace .snnr extension with .snnw
+            size_t dotPos = networkFilename.find_last_of('.');
+            if (dotPos != std::string::npos) {
+                networkFilename = networkFilename.substr(0, dotPos) + ".snnw";
+            } else {
+                networkFilename += ".snnw";
+            }
+
+            std::cout << "  Saving network structure to: " << networkFilename << std::endl;
+            if (adapter.exportNetworkStructure(networkFilename, "EMNIST Letters V1 Network")) {
+                std::cout << "  ✓ Network structure exported successfully" << std::endl;
+            } else {
+                std::cerr << "  WARNING: Failed to export network structure!" << std::endl;
+            }
+        }
+    }
 
     // ========================================================================
     // Training Phase
@@ -1012,6 +1099,7 @@ int main(int argc, char* argv[]) {
     // ========================================================================
     if (recordingManager) {
         std::cout << "\nSaving recording..." << std::endl;
+        // In streaming mode, saveRecording() will just finalize the file
         if (activityMonitor.saveRecording(simConfig.recordingFilename)) {
             auto metadata = recordingManager->getMetadata();
             std::cout << "Recording saved: " << simConfig.recordingFilename << std::endl;

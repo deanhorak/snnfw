@@ -12,7 +12,6 @@ layout(location = 4) in vec2 instanceLifetime; // x = lifetime, y = maxLifetime
 // Uniforms
 uniform mat4 view;
 uniform mat4 projection;
-uniform vec3 cameraPos;
 
 // Outputs to fragment shader
 out vec4 particleColor;

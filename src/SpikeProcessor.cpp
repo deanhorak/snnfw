@@ -16,7 +16,7 @@ SpikeProcessor::SpikeProcessor(size_t timeSliceCount, size_t deliveryThreads)
       stopRequested(false),
       currentTime(0.0),
       currentSliceIndex(0),
-      realTimeSync(true),
+      realTimeSync(false),  // Default to false (fast mode) - can be enabled with setRealTimeSync(true)
       totalLoopTime(0.0),
       maxLoopTime(0.0),
       loopCount(0),
@@ -316,6 +316,11 @@ void SpikeProcessor::processingLoop() {
             }
         } else {
             // Non-real-time mode: run as fast as possible
+            // IMPORTANT: Wait for all delivery threads to complete before advancing time
+            // This ensures spike propagation completes before the simulation time advances,
+            // preventing "out of range" errors when callbacks try to schedule new spikes
+            waitForDeliveryThreads();
+
             // Just a tiny sleep to prevent CPU spinning if there's no work
             if (iterationTimeUs < 10.0) {
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -474,6 +479,18 @@ void SpikeProcessor::cleanupCompletedThreads() {
 size_t SpikeProcessor::getActiveDeliveryThreadCount() const {
     std::lock_guard<std::mutex> lock(deliveryThreadsMutex);
     return activeDeliveryThreads.size();
+}
+
+void SpikeProcessor::waitForDeliveryThreads() {
+    std::lock_guard<std::mutex> lock(deliveryThreadsMutex);
+
+    // Join all active delivery threads
+    for (auto& thread : activeDeliveryThreads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    activeDeliveryThreads.clear();
 }
 
 void SpikeProcessor::getTimingStats(double& avgLoopTime, double& maxLoop, double& driftMs) const {
